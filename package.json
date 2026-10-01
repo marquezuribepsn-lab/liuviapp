@@ -7,6 +7,7 @@
   "engines": { "node": ">=22.13" },
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning server.js",
+    "restore": "node --disable-warning=ExperimentalWarning scripts/restore.js",
     "test": "node --disable-warning=ExperimentalWarning --test \"test/*.test.js\""
   }
 }

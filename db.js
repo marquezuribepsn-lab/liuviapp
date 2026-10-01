@@ -1,9 +1,13 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { DEFAULT_ROLES } from './auth.js';
 
-export function openDb(path = process.env.DB_PATH || 'data/liuvi.db') {
+// La base vive junto al programa, sin depender de la carpeta desde la que se lo abra.
+export const defaultDbPath = () => process.env.DB_PATH || join(dirname(fileURLToPath(import.meta.url)), 'data', 'liuvi.db');
+
+export function openDb(path = defaultDbPath()) {
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
   db.exec(`

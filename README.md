@@ -30,8 +30,13 @@ npm test
   - Cada venta, movimiento de caja y de stock queda a nombre de quien lo hizo; se ve en Caja, Stock, tickets y en las estadísticas por vendedor.
   - Seguridad: contraseñas con scrypt y sal, sesiones de 12 horas en cookie HttpOnly/SameSite=Strict, bloqueo de 60 s tras 5 intentos fallidos, mínimo de 8 caracteres, y siempre queda al menos un administrador activo.
 
+- **Una sola computadora**: el servidor acepta conexiones solo de esa misma PC (`127.0.0.1`). La base de datos es el archivo `data/liuvi.db`, dentro de la carpeta del programa (no cambia según desde dónde lo abras).
+- **Copia de seguridad en Google Drive**: instalá *Google Drive para escritorio*, creá una carpeta dentro de «Mi unidad» y pegá su ruta en la pestaña *Copias*. El sistema guarda ahí una copia por día y otra al cerrar la caja; Google Drive las sube solo. Se verifica cada copia, se conservan las últimas 30 y hay un botón «Hacer copia ahora». Requiere el permiso *Configurar y hacer copias de seguridad* (los administradores lo tienen).
+- **Restaurar una copia**: cerrá el sistema y ejecutá `npm run restore -- "ruta\de\la\copia.db"`. Valida el archivo y guarda la base actual al lado (`...antes-de-restaurar...`), así no se pierde nada.
+
 ## Notas
 
 - Las semanas siguen `%W` de SQLite (lunes como primer día).
-- Si se usa desde otras PC de la red, conviene servirla detrás de HTTPS (la cookie de sesión no lleva `Secure` porque en una sola PC se usa por `http://localhost`).
+- Las copias incluyen las contraseñas cifradas de los usuarios: activá la verificación en dos pasos en la cuenta de Google.
+- Si algún día necesitás usarlo desde otras PC del local: `HOST=0.0.0.0 npm start` (en Windows: `set HOST=0.0.0.0` y luego `npm start`) y entrar por `http://IP-DE-LA-PC:3000`. Ahí conviene una red de confianza, porque no hay HTTPS.
 - Quien tenga el permiso *Administrar usuarios y roles* puede darse a sí mismo cualquier permiso: dáselo solo a quien sea de confianza.

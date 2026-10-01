@@ -26,8 +26,8 @@ const articleLabel = (a) => [a.name, a.size && `Talle ${a.size}`, a.color].filte
 
 // ---------- Pestañas ----------
 let currentTab = 'venta';
-const loaders = { venta: () => {}, etiquetas: loadPrintTab, articulos: loadArticles, stock: loadStock, caja: loadCash, stats: loadStats, usuarios: loadUsers };
-const TAB_PERMS = { venta: ['ventas.cobrar'], articulos: ['articulos.ver'], etiquetas: ['articulos.ver'], stock: ['stock.ver'], caja: ['caja.ver', 'caja.operar', 'ventas.cobrar'], stats: ['estadisticas.ver'], usuarios: ['usuarios.admin'] };
+const loaders = { venta: () => {}, etiquetas: loadPrintTab, articulos: loadArticles, stock: loadStock, caja: loadCash, stats: loadStats, usuarios: loadUsers, copias: loadBackup };
+const TAB_PERMS = { venta: ['ventas.cobrar'], articulos: ['articulos.ver'], etiquetas: ['articulos.ver'], stock: ['stock.ver'], caja: ['caja.ver', 'caja.operar', 'ventas.cobrar'], stats: ['estadisticas.ver'], usuarios: ['usuarios.admin'], copias: ['sistema.copias'] };
 function showTab(name) {
   currentTab = name;
   $$('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
@@ -529,6 +529,29 @@ $('#userForm').addEventListener('submit', async (e) => {
     else await api('POST', '/users', { username: f.username.value, name: f.name.value, role_id: Number(f.role_id.value), password: f.password.value });
     $('#userDialog').close(); toast('Usuario guardado'); await loadUsers();
   } catch (err) { $('#userError').textContent = err.message; }
+});
+
+// ---------- Copias de seguridad ----------
+function renderBackup(b) {
+  $('#bkDir').value = b.dir; $('#bkAuto').checked = b.auto; $('#bkError').textContent = '';
+  const parts = [];
+  if (!b.dir) parts.push('<span class="neg">Sin configurar: todavía no se hacen copias.</span>');
+  else parts.push(b.last_at ? `Última copia: <b>${esc(b.last_at)}</b> (${esc(b.last_reason)})` : 'Todavía no se hizo ninguna copia.');
+  if (b.error) parts.push(`<span class="neg">Último error: ${esc(b.error)}</span>`);
+  $('#bkStatus').innerHTML = parts.join('<br>');
+  $('#bkFiles tbody').innerHTML = b.files.map((f) => `<tr><td>${esc(f.name)}</td><td>${esc(f.at)}</td><td class="num">${(f.size / 1024).toFixed(0)} KB</td></tr>`).join('') || '<tr><td colspan="3" class="muted">Sin copias en la carpeta</td></tr>';
+}
+async function loadBackup() { renderBackup(await api('GET', '/backup')); }
+$('#bkForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try { renderBackup(await api('PUT', '/backup', { dir: $('#bkDir').value, auto: $('#bkAuto').checked })); toast('Configuración guardada'); }
+  catch (err) { $('#bkError').textContent = err.message; }
+});
+$('#bkRun').addEventListener('click', async () => {
+  try {
+    renderBackup(await api('PUT', '/backup', { dir: $('#bkDir').value, auto: $('#bkAuto').checked }));
+    renderBackup(await api('POST', '/backup/run', {})); toast('Copia realizada');
+  } catch (err) { $('#bkError').textContent = err.message; }
 });
 
 // ---------- Sesión ----------
