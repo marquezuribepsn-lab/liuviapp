@@ -1,11 +1,31 @@
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, existsSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_ROLES } from './auth.js';
 
-// La base vive junto al programa, sin depender de la carpeta desde la que se lo abra.
-export const defaultDbPath = () => process.env.DB_PATH || join(dirname(fileURLToPath(import.meta.url)), 'data', 'liuvi.db');
+const APP_DIR = dirname(fileURLToPath(import.meta.url));
+
+// Carpeta fija de datos del usuario, FUERA de la carpeta del programa: así actualizar el programa
+// (bajar un ZIP nuevo, extraerlo en otro lado) o abrirlo desde cualquier carpeta nunca deja la base vacía.
+export function dataDirFor(platform = process.platform, env = process.env, home = homedir()) {
+  if (env.LIUVI_DATA_DIR) return env.LIUVI_DATA_DIR;
+  if (platform === 'win32') return join(env.LOCALAPPDATA || join(home, 'AppData', 'Local'), 'LiuVi');
+  if (platform === 'darwin') return join(home, 'Library', 'Application Support', 'LiuVi');
+  return join(env.XDG_DATA_HOME || join(home, '.local', 'share'), 'liuvi');
+}
+export const defaultDbPath = () => process.env.DB_PATH || join(dataDirFor(), 'liuvi.db');
+
+// Versiones anteriores guardaban la base en <programa>/data/liuvi.db. Si existe y todavía no hay base
+// en la carpeta nueva, se copia (copia consistente, sin tocar la original, que queda como respaldo).
+export function migrateLegacyDb(legacy = join(APP_DIR, 'data', 'liuvi.db'), target = defaultDbPath()) {
+  if (existsSync(target) || !existsSync(legacy)) return { migrated: false };
+  mkdirSync(dirname(target), { recursive: true });
+  const old = new DatabaseSync(legacy);
+  try { old.prepare('VACUUM INTO ?').run(target); } finally { old.close(); }
+  return { migrated: true, from: legacy, to: target };
+}
 
 export function openDb(path = defaultDbPath()) {
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });

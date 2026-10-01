@@ -576,6 +576,7 @@ function renderBackup(b) {
   else parts.push(b.last_at ? `Última copia: <b>${esc(b.last_at)}</b> (${esc(b.last_reason)})` : 'Todavía no se hizo ninguna copia.');
   if (b.error) parts.push(`<span class="neg">Último error: ${esc(b.error)}</span>`);
   $('#bkStatus').innerHTML = parts.join('<br>');
+  $('#bkDbFile').textContent = b.db_file || '';
   $('#bkFiles tbody').innerHTML = b.files.map((f) => `<tr><td>${esc(f.name)}</td><td>${esc(f.at)}</td><td class="num">${(f.size / 1024).toFixed(0)} KB</td></tr>`).join('') || '<tr><td colspan="3" class="muted">Sin copias en la carpeta</td></tr>';
 }
 async function loadBackup() { renderBackup(await api('GET', '/backup')); }

@@ -1,6 +1,16 @@
 # Liu Vi · Sistema de ventas para local de ropa
 
-Sin dependencias: solo **Node.js 22.13+** (usa SQLite integrado). Los datos quedan en `data/liuvi.db`.
+Sin dependencias: solo **Node.js 22.13+** (usa SQLite integrado).
+
+**Tus datos no se pierden al actualizar.** La base de datos (usuarios, artículos, ventas, caja) vive en una carpeta fija de tu usuario, **fuera de la carpeta del programa**:
+
+| Sistema | Ubicación del archivo `liuvi.db` |
+|---|---|
+| Windows | `C:\Users\<tu usuario>\AppData\Local\LiuVi\` |
+| Mac | `~/Library/Application Support/LiuVi/` |
+| Linux | `~/.local/share/liuvi/` |
+
+Así podés bajar un ZIP nuevo, extraerlo donde quieras o abrir el programa desde otra carpeta, y sigue todo igual. Al iniciar, el programa muestra la ubicación de la base, y también está en la pestaña *Copias*. Para elegir otra carpeta: variable de entorno `LIUVI_DATA_DIR`. Si venís de una versión que guardaba los datos en `data/` dentro del programa, se copian solos la primera vez (la original queda como respaldo).
 
 **En Windows**: hacé doble clic en `iniciar.bat`. Revisa que Node.js esté instalado, inicia el sistema y abre el navegador. No cierres esa ventana mientras vendés; para apagarlo, cerrala.
 Para que arranque solo al prender la PC: botón derecho sobre `iniciar.bat` → *Crear acceso directo*, presioná `Win + R`, escribí `shell:startup` y pegá el acceso directo en esa carpeta.
@@ -40,7 +50,7 @@ La interfaz usa el logo y la paleta de Liu Vi: verde agua `#37c2b9` (el del logo
   - Cada venta, movimiento de caja y de stock queda a nombre de quien lo hizo; se ve en Ventas y caja, Stock, tickets y en las estadísticas por vendedor.
   - Seguridad: contraseñas con scrypt y sal, sesiones de 12 horas en cookie HttpOnly/SameSite=Strict, bloqueo de 60 s tras 5 intentos fallidos, mínimo de 8 caracteres, y siempre queda al menos un administrador activo.
 
-- **Una sola computadora**: el servidor acepta conexiones solo de esa misma PC (`127.0.0.1`). La base de datos es el archivo `data/liuvi.db`, dentro de la carpeta del programa (no cambia según desde dónde lo abras).
+- **Una sola computadora**: el servidor acepta conexiones solo de esa misma PC (`127.0.0.1`). La base de datos es el archivo `liuvi.db` de la carpeta fija de tu usuario (ver arriba), sin importar desde dónde abras el programa.
 - **Copia de seguridad en Google Drive**: instalá *Google Drive para escritorio*, creá una carpeta dentro de «Mi unidad» y pegá su ruta en la pestaña *Copias*. El sistema guarda ahí una copia por día y otra al cerrar la caja; Google Drive las sube solo. Se verifica cada copia, se conservan las últimas 30 y hay un botón «Hacer copia ahora». Requiere el permiso *Configurar y hacer copias de seguridad* (los administradores lo tienen).
 - **Restaurar una copia**: cerrá el sistema y ejecutá `npm run restore -- "ruta\de\la\copia.db"`. Valida el archivo y guarda la base actual al lado (`...antes-de-restaurar...`), así no se pierde nada.
 
