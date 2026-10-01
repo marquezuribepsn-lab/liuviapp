@@ -74,3 +74,16 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 .lbl .s{font-size:8pt}.lbl .p{font-size:13pt;font-weight:700}
 .lbl .t{display:flex;justify-content:space-between;align-items:baseline}
 .lbl .code{font:7pt "Courier New",monospace;text-align:center;letter-spacing:.5px}
+
+/* Acceso y permisos */
+body.locked>header,body.locked>main{display:none}
+#login{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:var(--bg);z-index:60;padding:16px}
+#login[hidden]{display:none}
+#login .card{width:min(380px,100%)}
+#userBox{display:flex;align-items:center;gap:6px;font-size:13px}
+body.nocost .col-cost{display:none}
+.roleCard{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
+.roleCard .perms{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:2px 16px;margin:8px 0}
+.roleCard .grp{grid-column:1/-1;font-size:12px;text-transform:uppercase;color:var(--muted);margin-top:6px}
+.roleCard label.inline{margin:2px 0;color:var(--ink);font-size:14px}
+.tag{display:inline-block;padding:1px 8px;border-radius:99px;background:var(--line);font-size:12px}

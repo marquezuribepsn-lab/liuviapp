@@ -22,7 +22,16 @@ npm test
   - En el cuadro de impresión: escala 100 % («Tamaño real»), sin «Encabezados y pie de página».
   - Los ajustes se guardan en el navegador de cada PC.
 
+- **Usuarios, contraseñas y roles**:
+  - La primera vez que se abre el sistema pide crear la cuenta del administrador. No hay usuario ni contraseña por defecto.
+  - Los administradores crean usuarios, desactivan cuentas y restablecen contraseñas desde la pestaña *Usuarios*.
+  - Hay dos roles de fábrica: *Administrador* (todos los permisos, protegido) y *Vendedor* (vender, ver artículos y ver stock). Los administradores pueden **editar los permisos de cualquier rol (salvo el de Administrador) y crear roles nuevos**; el cambio rige al instante, incluso con la sesión ya abierta.
+  - Permisos: vender, anular ventas, ver/editar artículos, ver costos y ganancias, ver/ajustar stock, ver/operar caja, ver estadísticas y administrar usuarios. Quien no tiene «ver costos» no recibe el costo ni la ganancia desde el servidor, no solo se oculta en pantalla.
+  - Cada venta, movimiento de caja y de stock queda a nombre de quien lo hizo; se ve en Caja, Stock, tickets y en las estadísticas por vendedor.
+  - Seguridad: contraseñas con scrypt y sal, sesiones de 12 horas en cookie HttpOnly/SameSite=Strict, bloqueo de 60 s tras 5 intentos fallidos, mínimo de 8 caracteres, y siempre queda al menos un administrador activo.
+
 ## Notas
 
 - Las semanas siguen `%W` de SQLite (lunes como primer día).
-- La app no tiene usuarios ni login: usala en una red de confianza.
+- Si se usa desde otras PC de la red, conviene servirla detrás de HTTPS (la cookie de sesión no lleva `Secure` porque en una sola PC se usa por `http://localhost`).
+- Quien tenga el permiso *Administrar usuarios y roles* puede darse a sí mismo cualquier permiso: dáselo solo a quien sea de confianza.

@@ -7,7 +7,27 @@
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="/style.css">
 </head>
-<body>
+<body class="locked">
+<div id="login" hidden>
+  <form id="loginForm" class="card">
+    <h1>Liuvi</h1>
+    <p class="muted">Iniciá sesión para continuar</p>
+    <label>Usuario <input name="username" autocomplete="username" required></label>
+    <label>Contraseña <input name="password" type="password" autocomplete="current-password" required></label>
+    <div id="loginError" class="neg"></div>
+    <button class="primary" style="width:100%">Entrar</button>
+  </form>
+  <form id="setupForm" class="card" hidden>
+    <h1>Bienvenido a Liuvi</h1>
+    <p class="muted">Creá la cuenta del administrador. Con ella vas a poder crear los demás usuarios y definir qué puede hacer cada rol.</p>
+    <label>Nombre <input name="name" autocomplete="name" required></label>
+    <label>Usuario <input name="username" autocomplete="username" required minlength="3"></label>
+    <label>Contraseña (mínimo 8 caracteres) <input name="password" type="password" autocomplete="new-password" required minlength="8"></label>
+    <label>Repetir contraseña <input name="password2" type="password" autocomplete="new-password" required minlength="8"></label>
+    <div id="setupError" class="neg"></div>
+    <button class="primary" style="width:100%">Crear administrador</button>
+  </form>
+</div>
 <header>
   <h1>Liuvi</h1>
   <nav id="tabs">
@@ -17,8 +37,11 @@
     <button data-tab="etiquetas">Etiquetas</button>
     <button data-tab="caja">Caja</button>
     <button data-tab="stats">Estadísticas</button>
+    <button data-tab="usuarios">Usuarios</button>
   </nav>
   <span id="cashBadge" class="badge"></span>
+  <span id="userBox"><b id="userName"></b> <span id="userRole" class="muted"></span>
+    <button id="pwBtn" class="link">Contraseña</button><button id="logoutBtn" class="link">Salir</button></span>
 </header>
 <div id="toast"></div>
 <main>
@@ -67,7 +90,7 @@
     <label class="inline"><input type="checkbox" id="artLow"> Solo stock bajo</label>
     <button id="artNew" class="primary">+ Nuevo artículo</button>
   </div>
-  <table id="artTable"><thead><tr><th>Código</th><th>Artículo</th><th>Categoría</th><th>Talle</th><th>Color</th><th>Precio</th><th>Costo</th><th>Stock</th><th></th></tr></thead><tbody></tbody></table>
+  <table id="artTable"><thead><tr><th>Código</th><th>Artículo</th><th>Categoría</th><th>Talle</th><th>Color</th><th>Precio</th><th class="col-cost">Costo</th><th>Stock</th><th></th></tr></thead><tbody></tbody></table>
   <dialog id="artDialog">
     <form id="artForm" method="dialog">
       <h2 id="artTitle">Artículo</h2>
@@ -79,7 +102,7 @@
         <label>Talle <input name="size" placeholder="S, M, L, 42…"></label>
         <label>Color <input name="color"></label>
         <label>Precio venta <input name="price" type="number" min="0" step="0.01" required></label>
-        <label>Costo <input name="cost" type="number" min="0" step="0.01" value="0"></label>
+        <label class="col-cost">Costo <input name="cost" type="number" min="0" step="0.01" value="0"></label>
         <label>Stock mínimo <input name="min_stock" type="number" min="0" value="1"></label>
         <label id="stockInitial">Stock inicial <input name="stock" type="number" min="0" value="0"></label>
       </div>
@@ -92,7 +115,7 @@
 <section id="stock" class="tab" hidden>
   <div id="stockSummary" class="kpis"></div>
   <div class="split">
-    <div class="card">
+    <div class="card" id="adjCard">
       <h2>Ingreso / ajuste de stock</h2>
       <form id="adjForm">
         <label>Artículo (escaneá el código o buscá) <input id="adjScan" autocomplete="off"></label>
@@ -104,7 +127,7 @@
         <button class="primary">Aplicar</button>
       </form>
     </div>
-    <div class="card"><h2>Últimos movimientos</h2><table id="movTable"><thead><tr><th>Fecha</th><th>Artículo</th><th>Cant.</th><th>Motivo</th></tr></thead><tbody></tbody></table></div>
+    <div class="card"><h2>Últimos movimientos</h2><table id="movTable"><thead><tr><th>Fecha</th><th>Artículo</th><th>Cant.</th><th>Motivo</th><th>Usuario</th></tr></thead><tbody></tbody></table></div>
   </div>
   <h2>Stock bajo o agotado</h2>
   <table id="lowTable"><thead><tr><th>Artículo</th><th>Talle</th><th>Color</th><th>Stock</th><th>Mínimo</th></tr></thead><tbody></tbody></table>
@@ -169,7 +192,7 @@
   <div id="cajaOpen" hidden>
     <div id="cajaKpis" class="kpis"></div>
     <div class="split">
-      <div class="card">
+      <div class="card" id="cajaOps">
         <h2>Ingreso / egreso manual</h2>
         <form id="movForm">
           <label>Tipo <select id="movType"><option value="egreso">Egreso (gasto, retiro)</option><option value="ingreso">Ingreso</option></select></label>
@@ -187,13 +210,13 @@
           <button class="danger">Cerrar caja</button>
         </form>
       </div>
-      <div class="card"><h2>Movimientos de la caja</h2><table id="cashMovTable"><thead><tr><th>Hora</th><th>Tipo</th><th>Medio</th><th>Monto</th><th>Concepto</th></tr></thead><tbody></tbody></table></div>
+      <div class="card" id="cajaMovs"><h2>Movimientos de la caja</h2><table id="cashMovTable"><thead><tr><th>Hora</th><th>Tipo</th><th>Medio</th><th>Monto</th><th>Concepto</th><th>Usuario</th></tr></thead><tbody></tbody></table></div>
     </div>
   </div>
   <h2>Ventas de hoy</h2>
-  <table id="salesTable"><thead><tr><th>#</th><th>Hora</th><th>Detalle</th><th>Pago</th><th>Total</th><th></th></tr></thead><tbody></tbody></table>
-  <h2>Historial de cajas</h2>
-  <table id="sessionsTable"><thead><tr><th>#</th><th>Apertura</th><th>Cierre</th><th>Inicial</th><th>Ventas</th><th>Esperado</th><th>Contado</th><th>Diferencia</th></tr></thead><tbody></tbody></table>
+  <table id="salesTable"><thead><tr><th>#</th><th>Hora</th><th>Vendedor</th><th>Detalle</th><th>Pago</th><th>Total</th><th></th></tr></thead><tbody></tbody></table>
+  <div id="sessionsBox"><h2>Historial de cajas</h2>
+  <table id="sessionsTable"><thead><tr><th>#</th><th>Apertura</th><th>Cierre</th><th>Responsable</th><th>Inicial</th><th>Ventas</th><th>Esperado</th><th>Contado</th><th>Diferencia</th></tr></thead><tbody></tbody></table></div>
 </section>
 
 <!-- ESTADÍSTICAS -->
@@ -209,10 +232,43 @@
     <div class="card"><h2>Medios de pago (período actual)</h2><table id="methodTable"><tbody></tbody></table></div>
     <div class="card"><h2>Más vendidos (período actual)</h2><table id="topTable"><tbody></tbody></table></div>
   </div>
+  <div class="card"><h2>Ventas por vendedor (período actual)</h2><table id="sellerTable"><tbody></tbody></table></div>
   <table id="seriesTable"><thead><tr><th>Período</th><th>Ventas</th><th>Unidades</th><th>Total</th><th>Ticket prom.</th><th>Ganancia</th></tr></thead><tbody></tbody></table>
 </section>
 
+<!-- USUARIOS -->
+<section id="usuarios" class="tab" hidden>
+  <div class="row"><h2 style="margin:0;flex:1">Usuarios</h2><button id="userNew" class="primary">+ Nuevo usuario</button></div>
+  <table id="userTable"><thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Estado</th><th></th></tr></thead><tbody></tbody></table>
+  <div class="row"><h2 style="margin:18px 0 0;flex:1">Roles y permisos</h2><button id="roleNew" class="primary">+ Nuevo rol</button></div>
+  <p class="muted">Cada rol define qué puede hacer quien lo tenga. Los cambios rigen de inmediato, incluso para quienes ya tienen la sesión abierta. El rol Administrador siempre tiene todos los permisos.</p>
+  <div id="roleList"></div>
+
+  <dialog id="userDialog">
+    <form id="userForm" method="dialog">
+      <h2 id="userTitle">Usuario</h2>
+      <label>Usuario (para iniciar sesión) <input name="username" required minlength="3"></label>
+      <label>Nombre <input name="name" required></label>
+      <label>Rol <select name="role_id"></select></label>
+      <label id="userPwLabel">Contraseña <input name="password" type="password" autocomplete="new-password" minlength="8"></label>
+      <label class="inline" id="userActiveBox"><input type="checkbox" name="active" checked> Usuario activo</label>
+      <div id="userError" class="neg"></div>
+      <div class="row end"><button type="button" id="userCancel" class="ghost">Cancelar</button><button class="primary">Guardar</button></div>
+    </form>
+  </dialog>
+</section>
+
 </main>
+<dialog id="pwDialog">
+  <form id="pwForm" method="dialog">
+    <h2>Cambiar contraseña</h2>
+    <label>Contraseña actual <input name="current" type="password" autocomplete="current-password" required></label>
+    <label>Nueva contraseña (mínimo 8 caracteres) <input name="next" type="password" autocomplete="new-password" required minlength="8"></label>
+    <label>Repetir nueva contraseña <input name="next2" type="password" autocomplete="new-password" required minlength="8"></label>
+    <div id="pwError" class="neg"></div>
+    <div class="row end"><button type="button" id="pwCancel" class="ghost">Cancelar</button><button class="primary">Cambiar</button></div>
+  </form>
+</dialog>
 <div id="printArea"></div>
 <script src="/barcode.js"></script>
 <script src="/app.js"></script>

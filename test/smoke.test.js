@@ -1,19 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createServer } from 'node:http';
-import { openDb } from '../db.js';
-import { createApp } from '../app.js';
+import { start as startServer } from './helpers.js';
 
 async function start() {
-  const server = createServer(createApp(openDb(':memory:')));
-  await new Promise((r) => server.listen(0, r));
-  const base = `http://localhost:${server.address().port}`;
-  const call = async (method, path, body) => {
-    const res = await fetch(base + path, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
-    return { status: res.status, data: await res.json() };
-  };
-  return { call, close: () => server.close() };
+  const t = await startServer();
+  return { call: t.admin, close: t.close };
 }
+
 
 test('flujo completo: artículos, caja, venta, anulación y estadísticas', async () => {
   const { call, close } = await start();
