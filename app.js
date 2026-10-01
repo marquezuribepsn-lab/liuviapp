@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createBackups } from './backup.js';
+import { createImporter, ImportError, SheetFormatError } from './importer.js';
 import { appVersion, getSetting, setSetting } from './db.js';
 import {
   PERMISSIONS, ALL_PERMISSIONS, MIN_PASSWORD, SESSION_HOURS,
@@ -114,17 +115,24 @@ export function createApp(db) {
   };
 
   // Artículos
-  route('GET', '/api/articles', ['articulos.ver', 'stock.ver'], ({ query, can }) => {
+  route('GET', '/api/articles', ['articulos.ver', 'stock.ver'], ({ query, can, res }) => {
     const q = `%${(query.get('q') || '').trim()}%`;
     const all = query.get('all') === '1';
     const low = query.get('low') === '1';
     const brand = query.get('brand_id') || null;
-    return maskCost(db.prepare(`
-      ${ART}
+    const where = `
       WHERE (? OR a.active = 1) AND (a.name LIKE ? OR a.barcode LIKE ? OR a.category LIKE ? OR a.color LIKE ? OR a.size LIKE ? OR b.name LIKE ?)
-        AND (? = 0 OR a.stock <= a.min_stock) AND (? IS NULL OR a.brand_id = ?)
-      ORDER BY b.name, a.name, a.size LIMIT 500
-    `).all(all ? 1 : 0, q, q, q, q, q, q, low ? 1 : 0, brand, brand), can);
+        AND (? = 0 OR a.stock <= a.min_stock) AND (? IS NULL OR a.brand_id = ?)`;
+    const params = [all ? 1 : 0, q, q, q, q, q, q, low ? 1 : 0, brand, brand];
+    const limit = Math.min(Math.max(Number(query.get('limit')) || 1000, 1), 5000);
+    // El total real va en un encabezado: la pantalla avisa si se muestran menos de los que hay.
+    res.setHeader('X-Total-Count', db.prepare(`SELECT COUNT(*) AS n FROM articles a LEFT JOIN brands b ON b.id = a.brand_id ${where}`).get(...params).n);
+    return maskCost(db.prepare(`
+      ${ART} ${where}
+      ORDER BY b.name, a.name, a.color,
+        CASE a.size WHEN 'XXS' THEN 0 WHEN 'XS' THEN 1 WHEN 'S' THEN 2 WHEN 'M' THEN 3 WHEN 'L' THEN 4 WHEN 'XL' THEN 5 WHEN 'XXL' THEN 6 ELSE 9 END, a.size
+      LIMIT ${limit}
+    `).all(...params), can);
   });
 
   route('GET', '/api/articles/barcode/:code', ['articulos.ver', 'stock.ver'], ({ params, can }) => {
@@ -171,6 +179,23 @@ export function createApp(db) {
     if (!r.changes) throw new HttpError(404, 'Artículo no encontrado');
     return { ok: true };
   });
+
+  // Importar artículos desde una planilla (Excel o CSV)
+  const importer = createImporter(db, { resolveBrand, moveStock, tx });
+  const imp = (fn) => {
+    try { return fn(); } catch (e) {
+      if (e instanceof SheetFormatError) throw bad(e.message);
+      if (e instanceof ImportError) throw new HttpError(e.status, e.message);
+      throw e;
+    }
+  };
+  route('GET', '/api/import/template', 'articulos.editar', () => ({
+    raw: importer.template(), filename: 'planilla-modelo-articulos.xlsx',
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  }));
+  route('POST', '/api/import/preview', 'articulos.editar', ({ body, user }) => imp(() => importer.preview(user.id, body)));
+  route('POST', '/api/import/start', 'articulos.editar', ({ body, user, can }) => imp(() => ({ status: 202, data: importer.start(user.id, body, { canCost: can('costos.ver') }) })));
+  route('GET', '/api/import/:id', 'articulos.editar', ({ params }) => imp(() => importer.status(params.id)));
 
   // Marcas
   route('GET', '/api/brands', ['articulos.ver', 'stock.ver'], () => db.prepare(`
@@ -703,9 +728,15 @@ export function createApp(db) {
   });
 
   // ---------- Despacho ----------
+  const MAX_BODY = 34 * 1024 * 1024; // planillas de hasta ~25 MB (viajan en base64)
   async function readBody(req) {
     const chunks = [];
-    for await (const c of req) chunks.push(c);
+    let size = 0;
+    for await (const c of req) {
+      size += c.length;
+      if (size > MAX_BODY) throw new HttpError(413, 'El archivo es demasiado grande (máximo 25 MB).');
+      chunks.push(c);
+    }
     if (!chunks.length) return {};
     try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); }
     catch { throw bad('JSON inválido'); }
@@ -736,6 +767,10 @@ export function createApp(db) {
           if (req.method !== 'GET' && !String(req.headers['content-type'] || '').includes('application/json')) throw bad('Content-Type inválido');
           const body = req.method === 'GET' ? {} : await readBody(req);
           const out = r.handler({ params, query: url.searchParams, body, user, can, req, res });
+          if (out?.raw) {
+            res.writeHead(200, { 'Content-Type': out.type, 'Content-Disposition': `attachment; filename="${out.filename}"`, 'Cache-Control': 'no-store' });
+            return res.end(out.raw);
+          }
           return out && out.status && out.data !== undefined ? send(out.status, out.data) : send(200, out ?? null);
         }
         throw new HttpError(404, 'Ruta no encontrada');

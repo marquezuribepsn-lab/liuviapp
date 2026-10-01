@@ -7,6 +7,7 @@ const time = (s) => s.slice(11, 16);
 async function api(method, path, body) {
   const res = await fetch('/api' + path, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
   const data = await res.json().catch(() => null);
+  api.total = res.headers.get('X-Total-Count') === null ? null : Number(res.headers.get('X-Total-Count')); // total real de un listado
   if (res.status === 401 && !path.startsWith('/auth/')) { if (data?.locked) showLock(); else showLogin(); }
   if (!res.ok) { const err = new Error(data?.error || 'Error de servidor'); err.locked = !!data?.locked; throw err; }
   return data;
@@ -160,6 +161,10 @@ async function loadArticles() {
     <td>${can('articulos.editar') ? `<button class="link" data-edit="${a.id}">Editar</button>` : ''}<button class="link" data-lbl="${a.id}">Etiqueta</button>${can('articulos.editar') ? `<button class="link" data-del="${a.id}">Baja</button>` : ''}</td></tr>`).join('')
     || '<tr><td colspan="10" class="muted">Sin artículos</td></tr>';
   window._arts = rows;
+  const total = api.total;
+  $('#artNote').textContent = total == null ? '' : total > rows.length
+    ? `Mostrando ${rows.length} de ${total} artículos. Usá la búsqueda o el filtro de marca para ver el resto.`
+    : `${total} artículo${total === 1 ? '' : 's'}.`;
   await loadBrands();
   const cats = await api('GET', '/articles');
   $('#cats').innerHTML = [...new Set(cats.map((a) => a.category).filter(Boolean))].map((c) => `<option value="${esc(c)}">`).join('');
@@ -227,6 +232,86 @@ $('#artTable').addEventListener('click', guard(async (e) => {
     await api('DELETE', '/articles/' + e.target.dataset.del); await loadArticles();
   }
 }));
+
+// ---------- Importar artículos desde Excel ----------
+let impPreview = null, impRunning = false;
+const impShow = (n) => [1, 2, 3].forEach((i) => ($('#impStep' + i).hidden = i !== n));
+const fmt = (n) => Number(n).toLocaleString('es-AR');
+const kpi = (label, value, cls = '') => `<div class="kpi"><span>${label}</span><b class="${cls}">${fmt(value)}</b></div>`;
+const fileToBase64 = (file) => new Promise((resolve, reject) => {
+  const r = new FileReader();
+  r.onload = () => resolve(String(r.result).split(',')[1] || '');
+  r.onerror = () => reject(new Error('No se pudo leer el archivo'));
+  r.readAsDataURL(file);
+});
+$('#artImport').addEventListener('click', () => {
+  impPreview = null; $('#impFile').value = ''; $('#impAnalyze').disabled = true; setMsg('impError', '');
+  impShow(1); $('#importDialog').showModal();
+});
+$('#importDialog').addEventListener('cancel', (e) => { if (impRunning) e.preventDefault(); }); // mientras carga no se puede cerrar con Esc
+$('#impCancel1').addEventListener('click', () => $('#importDialog').close());
+$('#impFile').addEventListener('change', () => { $('#impAnalyze').disabled = !$('#impFile').files.length; setMsg('impError', ''); });
+$('#impBack').addEventListener('click', () => { impShow(1); });
+$('#impAnalyze').addEventListener('click', async () => {
+  const file = $('#impFile').files[0];
+  if (!file) return;
+  if (file.size > 25 * 1024 * 1024) return setMsg('impError', 'El archivo es demasiado grande (máximo 25 MB).');
+  const btn = $('#impAnalyze'); btn.disabled = true; btn.textContent = 'Analizando…'; setMsg('impError', '');
+  try {
+    impPreview = await api('POST', '/import/preview', { filename: file.name, data: await fileToBase64(file) });
+    renderImpPreview();
+  } catch (err) { setMsg('impError', err.message); }
+  finally { btn.textContent = 'Analizar planilla'; btn.disabled = false; }
+});
+function renderImpPreview() {
+  const p = impPreview;
+  $('#impKpis').innerHTML = kpi('Filas leídas', p.totalRows) + kpi('Listas para cargar', p.validRows, 'pos') + kpi('Artículos nuevos', p.newRows) + kpi('Ya existen', p.existingRows) + kpi('Con errores', p.errorCount, p.errorCount ? 'neg' : '');
+  const notes = [`Hoja «${esc(p.sheet)}», títulos en la fila ${p.headerRow}.`];
+  const missing = p.columns.filter((c) => !c.found).map((c) => c.title);
+  if (missing.length) notes.push(`Columnas que no están en la planilla (quedan vacías): ${esc(missing.join(', '))}.`);
+  if (p.newBrands.length) notes.push(`Se van a crear estas marcas: <b>${esc(p.newBrands.join(', '))}</b>.`);
+  if (p.noCodeRows) notes.push(`${fmt(p.noCodeRows)} fila${p.noCodeRows === 1 ? '' : 's'} sin código de barras.`);
+  $('#impInfo').innerHTML = notes.join(' ');
+  $('#impErrBox').hidden = !p.errorCount;
+  $('#impErrBox').open = p.errorCount > 0 && p.errorCount <= 5;
+  $('#impErrSummary').textContent = `${fmt(p.errorCount)} fila${p.errorCount === 1 ? '' : 's'} con errores: no se van a cargar`;
+  $('#impErrTable tbody').innerHTML = p.errors.map((e) => `<tr><td>${e.row}</td><td>${esc(e.message)}</td></tr>`).join('');
+  $('#impErrMore').textContent = p.errorCount > p.errors.length ? `Se muestran las primeras ${p.errors.length}. Corregí la planilla y volvé a subirla.` : '';
+  $('#impModeBox').hidden = !p.existingRows;
+  $('#impStart').disabled = !p.validRows;
+  $('#impStart').textContent = p.validRows ? `Cargar ${fmt(p.validRows)} artículo${p.validRows === 1 ? '' : 's'}` : 'No hay filas para cargar';
+  impShow(2);
+}
+$('#impStart').addEventListener('click', guard(async () => {
+  const st = await api('POST', '/import/start', { token: impPreview.token, mode: $('#impMode').value, genCodes: $('#impGen').checked });
+  impRunning = true; $('#impClose').disabled = true; $('#impDone').innerHTML = ''; $('#impMsg').textContent = ''; $('#impMsg').className = '';
+  $('#impBar').style.width = '0%'; $('#impCount').textContent = ''; $('#impTitle').textContent = 'Cargando artículos…'; // sin restos de la carga anterior
+  impShow(3); renderImpProgress(st); pollImport(st.id);
+}));
+function renderImpProgress(s) {
+  const pct = s.total ? Math.floor((s.done / s.total) * 100) : 100;
+  $('#impBar').style.width = pct + '%';
+  $('#impCount').textContent = s.state === 'running' ? `Cargando… ${fmt(s.done)} de ${fmt(s.total)} (${pct}%)` : `${fmt(s.done)} de ${fmt(s.total)} (${pct}%)`;
+  $('#impTitle').textContent = s.state === 'running' ? 'Cargando artículos…' : s.state === 'done' ? '✔ Carga finalizada' : 'La carga se detuvo';
+}
+async function pollImport(id) {
+  let s;
+  try { s = await api('GET', '/import/' + id); }
+  catch (err) { impRunning = false; $('#impClose').disabled = false; $('#impTitle').textContent = 'No se pudo ver el avance'; $('#impMsg').textContent = err.message; $('#impMsg').className = 'neg'; return; }
+  renderImpProgress(s);
+  $('#impDone').innerHTML = kpi('Nuevos', s.created, 'pos') + kpi('Actualizados', s.updated) + kpi('Omitidos', s.skipped) + kpi('Marcas nuevas', s.brandsCreated) + kpi('Filas con errores', s.errorCount, s.errorCount ? 'neg' : '');
+  if (s.state === 'running') return setTimeout(() => pollImport(id), 250);
+  impRunning = false; $('#impClose').disabled = false;
+  const ok = s.state === 'done';
+  $('#impMsg').className = ok ? 'pos' : 'neg';
+  $('#impMsg').textContent = ok
+    ? `Se cargaron ${fmt(s.created)} artículos nuevos y se actualizaron ${fmt(s.updated)}${s.skipped ? `; ${fmt(s.skipped)} ya existían y se dejaron como estaban` : ''}.${s.errorCount ? ` ${fmt(s.errorCount)} filas con errores no se cargaron.` : ''} El sistema ya está actualizado.`
+    : s.message;
+  if (ok) toast(`Carga finalizada: ${fmt(s.created)} nuevos, ${fmt(s.updated)} actualizados${s.skipped ? `, ${fmt(s.skipped)} omitidos` : ''}`);
+  // El sistema se actualiza solo: listado, marcas y datos de stock.
+  await guard(loadArticles)();
+}
+$('#impClose').addEventListener('click', () => $('#importDialog').close());
 
 // ---------- Stock ----------
 let adjArticle = null;
@@ -724,7 +809,7 @@ async function boot() {
   appReady = true; startIdleWatch();
   document.body.classList.toggle('nocost', !can('costos.ver'));
   $('#adjCard').hidden = !can('stock.ajustar');
-  $('#artNew').hidden = !can('articulos.editar');
+  $('#artNew').hidden = $('#artImport').hidden = !can('articulos.editar');
   let first = null;
   $$('#tabs button').forEach((b) => { const ok = canAny(...TAB_PERMS[b.dataset.tab]); b.hidden = !ok; if (ok && !first) first = b.dataset.tab; });
   renderCart();
