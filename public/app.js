@@ -26,8 +26,8 @@ const articleLabel = (a) => [a.brand, a.name, a.size && `Talle ${a.size}`, a.col
 
 // ---------- Pestañas ----------
 let currentTab = 'venta';
-const loaders = { venta: () => {}, etiquetas: loadPrintTab, articulos: loadArticles, stock: loadStock, caja: loadCash, stats: loadStats, usuarios: loadUsers, copias: loadBackup };
-const TAB_PERMS = { venta: ['ventas.cobrar'], articulos: ['articulos.ver'], etiquetas: ['articulos.ver'], stock: ['stock.ver'], caja: ['caja.ver', 'caja.operar', 'ventas.cobrar'], stats: ['estadisticas.ver'], usuarios: ['usuarios.admin'], copias: ['sistema.copias'] };
+const loaders = { venta: loadCash, etiquetas: loadPrintTab, articulos: loadArticles, stock: loadStock, stats: loadStats, usuarios: loadUsers, copias: loadBackup };
+const TAB_PERMS = { venta: ['ventas.cobrar', 'caja.ver', 'caja.operar'], articulos: ['articulos.ver'], etiquetas: ['articulos.ver'], stock: ['stock.ver'], stats: ['estadisticas.ver'], usuarios: ['usuarios.admin'], copias: ['sistema.copias'] };
 function showTab(name) {
   currentTab = name;
   $$('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
@@ -40,7 +40,7 @@ $('#tabs').addEventListener('click', (e) => e.target.dataset.tab && showTab(e.ta
 // En la pantalla de venta, cualquier tecla (o el lector) va al campo de escaneo.
 document.addEventListener('keydown', (e) => {
   if (currentTab !== 'venta' || e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1) return;
-  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName) || $('dialog[open]')) return;
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName) || $('dialog[open]') || $('#posBox').hidden) return;
   $('#scan').focus();
 });
 
@@ -142,7 +142,7 @@ $('#charge').addEventListener('click', guard(async () => {
   if (!payments.length) payments.push({ method: 'efectivo', amount: total }); // por defecto: efectivo exacto
   const sale = await api('POST', '/sales', { items: cart.map((l) => ({ article_id: l.a.id, qty: l.qty })), discount_pct: Number($('#discount').value) || 0, payments });
   toast(`Venta #${sale.id} registrada${sale.change ? ` · Vuelto ${money(sale.change)}` : ''}`);
-  resetSale(); await refreshCash();
+  resetSale(); await loadCash();
   const full = (await api('GET', '/sales')).find((x) => x.id === sale.id);
   lastTicket = { ...full, change: sale.change };
   if ($('#autoTicket').checked && full) printTicket(lastTicket);
@@ -266,6 +266,8 @@ async function loadCash() {
   await refreshCash();
   const operar = can('caja.operar'), ver = can('caja.ver');
   $('#cajaClosed').hidden = !!cash; $('#cajaOpen').hidden = !cash;
+  $('#posBox').hidden = !(cash && can('ventas.cobrar')); // sin caja abierta no se vende
+  $('#cajaKpis').hidden = !(cash && (ver || operar));
   $('#openForm').hidden = !operar;
   $('#cajaClosed').querySelector('.muted')?.remove();
   if (!cash && !operar) $('#cajaClosed').insertAdjacentHTML('beforeend', '<p class="muted">La caja está cerrada. Pedile a quien tenga permiso que la abra.</p>');
@@ -299,6 +301,8 @@ async function loadCash() {
         <td class="num">${s.closed_at ? money(s.expected_cash) : '—'}</td><td class="num">${s.closed_at ? money(s.counted_cash) : '—'}</td><td class="num ${d < 0 ? 'neg' : d > 0 ? 'pos' : ''}">${d == null ? '—' : money(d)}</td></tr>`;
     }).join('');
   }
+  // Con la venta a la vista, el escáner queda listo (salvo que se esté escribiendo en otro campo).
+  if (currentTab === 'venta' && !$('#posBox').hidden && !document.activeElement?.matches('input, select, textarea')) $('#scan').focus();
 }
 $('#openForm').addEventListener('submit', guard(async (e) => {
   e.preventDefault();
