@@ -1,4 +1,5 @@
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createBackups } from './backup.js';
@@ -810,9 +811,20 @@ export function createApp(db) {
       const rel = url.pathname === '/' ? 'index.html' : normalize(url.pathname).replace(/^(\.\.[/\\])+/, '');
       const file = join(PUBLIC_DIR, rel);
       if (!file.startsWith(PUBLIC_DIR) || !existsSync(file)) { res.writeHead(404); return res.end('No encontrado'); }
+      if (!statSync(file).isFile()) { res.writeHead(404); return res.end('No encontrado'); }
       const type = MIME[extname(file)] || 'application/octet-stream';
-      res.writeHead(200, { 'Content-Type': type, ...(type.startsWith('image/') && { 'Cache-Control': 'public, max-age=86400' }) });
-      res.end(readFileSync(file));
+      let body = readFileSync(file);
+      if (extname(file) === '.html') {
+        // La página lleva su versión: los scripts y estilos se piden con ?v=VERSION, así una versión nueva nunca usa archivos viejos guardados por el navegador.
+        const v = appVersion();
+        body = Buffer.from(body.toString('utf8').replaceAll('__VERSION__', v).replace(/(src|href)="\/([\w.-]+\.(?:js|css))"/g, `$1="/$2?v=${v}"`));
+      }
+      // Código y página: el navegador siempre consulta si cambiaron (ETag, responde 304 si no). Imágenes: un día.
+      const cache = type.startsWith('image/') ? 'public, max-age=86400' : 'no-cache';
+      const etag = `"${createHash('sha1').update(body).digest('base64url').slice(0, 24)}"`;
+      if (req.headers['if-none-match'] === etag) { res.writeHead(304, { ETag: etag, 'Cache-Control': cache }); return res.end(); }
+      res.writeHead(200, { 'Content-Type': type, 'Cache-Control': cache, ETag: etag });
+      res.end(body);
     } catch (e) {
       if (e instanceof HttpError) return send(e.status, { error: e.message, ...e.extra });
       console.error(e);

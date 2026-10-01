@@ -29,8 +29,8 @@ echo  NO CIERRES ESTA VENTANA mientras uses el sistema.
 echo  Para apagarlo, cerra esta ventana.
 echo.
 
-rem Abre el navegador unos segundos despues, cuando el sistema ya esta listo.
-start "" /min cmd /c "timeout /t 3 /nobreak >nul & start http://localhost:3000"
+rem El propio sistema abre el navegador cuando ya esta funcionando (y no lo abre si hubo un problema).
+set LIUVI_OPEN=1
 
 node --disable-warning=ExperimentalWarning server.js
 

@@ -28,8 +28,8 @@ echo " NO CIERRES ESTA VENTANA mientras uses el sistema."
 echo " Para apagarlo, cerrá esta ventana o presioná Control + C."
 echo
 
-# Abre el navegador unos segundos después, cuando el sistema ya está listo.
-( sleep 3; open "http://localhost:$PORT" ) &
+# El propio sistema abre el navegador cuando ya está funcionando (y no lo abre si hubo un problema).
+export LIUVI_OPEN=1
 
 node --disable-warning=ExperimentalWarning server.js
 

@@ -880,6 +880,13 @@ function startIdleWatch() {
 async function boot() {
   me = await api('GET', '/auth/me');
   permCatalog = me.permissions;
+  // Si el HTML quedó guardado de una versión anterior, se recarga una vez para traer la actual.
+  const pageVersion = document.querySelector('meta[name=liuvi-version]')?.content;
+  if (pageVersion && me.version && pageVersion !== me.version && sessionStorage.getItem('liuvi.reloaded') !== me.version) {
+    try { sessionStorage.setItem('liuvi.reloaded', me.version); } catch { /* sin almacenamiento */ }
+    return location.reload();
+  }
+  $('#footVer').textContent = `Liu Vi v${me.version}`;
   $('#verInfo').textContent = `Liu Vi v${me.version}`;
   if (me.setupNeeded && me.dbFile) $('#setupDb').textContent = `No hay ningún usuario en esta base de datos (${me.dbFile}). Si ya habías creado usuarios, es posible que estés abriendo una versión vieja o otra copia del programa.`;
   if (me.locked) return showLock(me.lockedName); // la sesión sigue abierta pero bloqueada
