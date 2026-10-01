@@ -13,6 +13,7 @@ export const PERMISSIONS = [
   { key: 'caja.operar', label: 'Abrir y cerrar caja, registrar ingresos y egresos', group: 'Caja' },
   { key: 'estadisticas.ver', label: 'Ver estadísticas', group: 'Estadísticas' },
   { key: 'usuarios.admin', label: 'Administrar usuarios y roles', group: 'Administración' },
+  { key: 'sistema.copias', label: 'Configurar y hacer copias de seguridad', group: 'Administración' },
 ];
 export const ALL_PERMISSIONS = PERMISSIONS.map((p) => p.key);
 

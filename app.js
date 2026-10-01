@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createBackups } from './backup.js';
 import {
   PERMISSIONS, ALL_PERMISSIONS, MIN_PASSWORD, SESSION_HOURS,
   hashPassword, verifyPassword, newToken, hashToken, parseCookies, createLimiter,
@@ -32,6 +33,7 @@ function num(v, name, { min = 0, int = false } = {}) {
 }
 
 export function createApp(db) {
+  const backups = createBackups(db);
   const openSession = () => db.prepare('SELECT * FROM cash_sessions WHERE closed_at IS NULL').get();
   const requireSession = () => {
     const s = openSession();
@@ -203,7 +205,7 @@ export function createApp(db) {
 
   route('POST', '/api/cash/close', 'caja.operar', ({ body, user }) => {
     const counted = num(body.counted, 'Efectivo contado');
-    return tx(db, () => {
+    const result = tx(db, () => {
       const s = requireSession();
       const sum = sessionSummary(s);
       db.prepare(`UPDATE cash_sessions SET closed_at = datetime('now','localtime'), expected_cash=?, counted_cash=?, note=?, closed_by=? WHERE id=?`)
@@ -211,6 +213,8 @@ export function createApp(db) {
       const closed = sessionSummary(db.prepare('SELECT * FROM cash_sessions WHERE id=?').get(s.id));
       return { ...closed, difference: round2(counted - sum.expected_cash_now) };
     });
+    backups.tryRun('cierre de caja'); // el cierre es un buen momento para resguardar el día
+    return result;
   });
 
   route('POST', '/api/cash/movement', 'caja.operar', ({ body, user }) => {
@@ -550,6 +554,18 @@ export function createApp(db) {
     return { ok: true };
   }));
 
+  // ---------- Copias de seguridad ----------
+  const BACKUP = 'sistema.copias';
+  route('GET', '/api/backup', BACKUP, () => backups.status());
+  route('PUT', '/api/backup', BACKUP, ({ body }) => {
+    try { backups.configure({ dir: body.dir, auto: body.auto }); } catch (e) { throw bad(e.message); }
+    return backups.status();
+  });
+  route('POST', '/api/backup/run', BACKUP, () => {
+    try { backups.run('manual'); } catch (e) { throw bad(e.message); }
+    return backups.status();
+  });
+
   // ---------- Despacho ----------
   async function readBody(req) {
     const chunks = [];
@@ -559,7 +575,7 @@ export function createApp(db) {
     catch { throw bad('JSON inválido'); }
   }
 
-  return async function handle(req, res) {
+  async function handle(req, res) {
     const url = new URL(req.url, 'http://localhost');
     const send = (status, data) => {
       const body = JSON.stringify(data);
@@ -598,5 +614,7 @@ export function createApp(db) {
       console.error(e);
       send(500, { error: 'Error interno' });
     }
-  };
+  }
+  handle.backups = backups;
+  return handle;
 }

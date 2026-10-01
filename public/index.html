@@ -38,6 +38,7 @@
     <button data-tab="caja">Caja</button>
     <button data-tab="stats">Estadísticas</button>
     <button data-tab="usuarios">Usuarios</button>
+    <button data-tab="copias">Copias</button>
   </nav>
   <span id="cashBadge" class="badge"></span>
   <span id="userBox"><b id="userName"></b> <span id="userRole" class="muted"></span>
@@ -256,6 +257,37 @@
       <div class="row end"><button type="button" id="userCancel" class="ghost">Cancelar</button><button class="primary">Guardar</button></div>
     </form>
   </dialog>
+</section>
+
+<!-- COPIAS DE SEGURIDAD -->
+<section id="copias" class="tab" hidden>
+  <div class="split">
+    <div class="card">
+      <h2>Copia de seguridad en Google Drive</h2>
+      <p class="muted">Instalá <b>Google Drive para escritorio</b> en esta computadora, creá una carpeta (por ejemplo «Liuvi») dentro de «Mi unidad» y pegá acá su ruta completa. El sistema guarda las copias ahí y Google Drive las sube solo.</p>
+      <form id="bkForm">
+        <label>Carpeta de copias (ruta completa) <input id="bkDir" placeholder="C:\Users\Mi nombre\Mi unidad\Liuvi"></label>
+        <label class="inline"><input type="checkbox" id="bkAuto" checked> Copia automática (una vez por día y al cerrar la caja)</label>
+        <div id="bkError" class="neg"></div>
+        <div class="row"><button class="primary">Guardar</button><button type="button" id="bkRun" class="ghost">Hacer copia ahora</button></div>
+      </form>
+      <p class="muted">Se conservan las últimas 30 copias. Las copias incluyen contraseñas cifradas de los usuarios: protegé tu cuenta de Google con verificación en dos pasos.</p>
+    </div>
+    <div class="card">
+      <h2>Estado</h2>
+      <div id="bkStatus" class="muted"></div>
+      <table id="bkFiles"><thead><tr><th>Archivo</th><th>Fecha</th><th>Tamaño</th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Cómo restaurar una copia</h2>
+    <ol class="muted" style="margin:0;padding-left:20px">
+      <li>Cerrá el sistema (la ventana negra donde corre).</li>
+      <li>Abrí una consola en la carpeta del programa y ejecutá: <code>npm run restore -- "ruta\de\la\copia.db"</code></li>
+      <li>La base actual no se pierde: queda guardada al lado con «antes-de-restaurar» en el nombre.</li>
+      <li>Volvé a abrir el sistema.</li>
+    </ol>
+  </div>
 </section>
 
 </main>
