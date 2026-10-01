@@ -15,6 +15,11 @@ npm test
 - **Ventas**: pago en efectivo, tarjeta o transferencia (se puede combinar), descuento %, vuelto y anulación.
 - **Estadísticas**: ventas, unidades, ticket promedio y ganancia por **día, semana, mes y año**; desglose por medio de pago y artículos más vendidos.
 - **Lector de código de barras**: cualquier lector USB/Bluetooth que funcione como teclado. En *Vender* la pantalla siempre escucha el escáner; también sirve en *Artículos* y *Stock*. Si un artículo no tiene código, el botón *Generar* crea uno interno (EAN-13, prefijo 200) para imprimir como etiqueta.
+- **Impresión de tickets y etiquetas** (sin drivers especiales, usa el cuadro de impresión del navegador):
+  - *Ticket* de 58 u 80 mm con nombre del local, detalle, descuento, medios de pago y vuelto. Se imprime solo al cobrar (opción en *Vender*), con *Último ticket*, o desde *Caja → Ventas de hoy*.
+  - *Etiquetas* con nombre, talle, color, precio y código de barras, para rollo (una por hoja, tamaño configurable, por defecto 50×30 mm) o para hoja A4. Se arman en la pestaña *Etiquetas* o con el botón *Etiqueta* de cada artículo; las copias pueden igualar el stock.
+  - Los códigos se dibujan como EAN-13 (si son 13 dígitos válidos, como los que genera el botón *Generar*) o Code 128, y se verificaron con un decodificador independiente.
+  - Al imprimir, elegí la impresora y desactivá encabezados y pie de página del navegador.
 
 ## Notas
 

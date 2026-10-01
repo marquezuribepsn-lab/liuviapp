@@ -14,6 +14,7 @@
     <button data-tab="venta" class="active">Vender</button>
     <button data-tab="articulos">Artículos</button>
     <button data-tab="stock">Stock</button>
+    <button data-tab="etiquetas">Etiquetas</button>
     <button data-tab="caja">Caja</button>
     <button data-tab="stats">Estadísticas</button>
   </nav>
@@ -33,6 +34,7 @@
       <h2>Venta actual</h2>
       <table id="cart"><thead><tr><th>Artículo</th><th>Cant.</th><th>Precio</th><th>Subtotal</th><th></th></tr></thead><tbody></tbody></table>
       <div class="totals">
+        <label class="inline"><input type="checkbox" id="autoTicket"> Imprimir ticket al cobrar</label>
         <label>Descuento % <input id="discount" type="number" min="0" max="100" value="0"></label>
         <div>Subtotal: <b id="subtotal">$0</b></div>
         <div class="big">Total: <b id="total">$0</b></div>
@@ -52,6 +54,7 @@
       <div class="row">
         <button id="charge" class="primary">Cobrar</button>
         <button id="clearCart" class="ghost">Vaciar</button>
+        <button id="lastTicket" class="ghost">Último ticket</button>
       </div>
     </div>
   </div>
@@ -107,6 +110,42 @@
   <table id="lowTable"><thead><tr><th>Artículo</th><th>Talle</th><th>Color</th><th>Stock</th><th>Mínimo</th></tr></thead><tbody></tbody></table>
 </section>
 
+<!-- ETIQUETAS -->
+<section id="etiquetas" class="tab" hidden>
+  <div class="split">
+    <div class="card">
+      <h2>Etiquetas con código de barras</h2>
+      <label>Agregar artículo (escaneá o buscá) <input id="lblScan" autocomplete="off"></label>
+      <div id="lblResults" class="list"></div>
+      <table id="lblTable"><thead><tr><th>Artículo</th><th>Código</th><th>Copias</th><th></th></tr></thead><tbody></tbody></table>
+      <div class="grid2">
+        <label>Formato
+          <select id="lblFormat"><option value="roll">Rollo (una etiqueta por hoja)</option><option value="sheet">Hoja A4 (varias por hoja)</option></select>
+        </label>
+        <span></span>
+        <label>Ancho (mm) <input id="lblW" type="number" min="20" max="200" value="50"></label>
+        <label>Alto (mm) <input id="lblH" type="number" min="15" max="200" value="30"></label>
+      </div>
+      <div class="row">
+        <button id="lblPrint" class="primary">Imprimir etiquetas</button>
+        <button id="lblStock" class="ghost">Cargar copias = stock</button>
+        <button id="lblClear" class="ghost">Vaciar</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Ajustes de ticket</h2>
+      <label>Nombre del local <input id="setName" placeholder="Mi local"></label>
+      <label>Datos adicionales (dirección, teléfono, CUIT…) <input id="setInfo"></label>
+      <label>Ancho del papel
+        <select id="setPaper"><option value="80">80 mm</option><option value="58">58 mm</option></select>
+      </label>
+      <label>Pie del ticket <input id="setFooter" placeholder="¡Gracias por su compra!"></label>
+      <p class="muted">El ticket y las etiquetas se imprimen con el cuadro de impresión del navegador: elegí tu impresora térmica y desactivá encabezados y pie de página. Los cambios se guardan en este navegador.</p>
+      <button id="testTicket" class="ghost">Imprimir ticket de prueba</button>
+    </div>
+  </div>
+</section>
+
 <!-- CAJA -->
 <section id="caja" class="tab" hidden>
   <div id="cajaClosed" class="card" hidden>
@@ -160,6 +199,8 @@
 </section>
 
 </main>
+<div id="printArea"></div>
+<script src="/barcode.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

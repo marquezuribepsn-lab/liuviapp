@@ -54,3 +54,23 @@ dialog::backdrop{background:#0008}
 #toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);padding:12px 20px;border-radius:10px;background:var(--ink);color:var(--bg);opacity:0;pointer-events:none;transition:.2s;z-index:50}
 #toast.show{opacity:1}#toast.error{background:var(--bad);color:#fff}
 hr{border:0;border-top:1px solid var(--line);margin:18px 0}
+
+/* Impresión: solo se imprime #printArea (ticket o etiquetas) */
+#printArea{display:none}
+@media print{
+  body.printing>*:not(#printArea){display:none!important}
+  body.printing{background:#fff}
+  body.printing #printArea{display:block}
+}
+.ticket{font:12px/1.3 "Courier New",monospace;color:#000;background:#fff;margin:0 auto}
+.ticket .c{text-align:center}.ticket .b{font-weight:700}
+.ticket hr{border:0;border-top:1px dashed #000;margin:5px 0}
+.ticket .r{display:flex;justify-content:space-between;gap:6px}.ticket .r span:first-child{overflow-wrap:anywhere}
+.ticket .tot{font-size:15px;font-weight:700}
+.lbl{box-sizing:border-box;width:var(--w);height:var(--h);padding:1.5mm;overflow:hidden;display:flex;flex-direction:column;justify-content:space-between;font-family:Arial,sans-serif;color:#000;background:#fff;break-inside:avoid;page-break-inside:avoid}
+.roll .lbl{break-after:page;page-break-after:always}
+.sheet{display:flex;flex-wrap:wrap;gap:0}.sheet .lbl{outline:1px dashed #aaa}
+.lbl .n{font-size:9pt;font-weight:700;line-height:1.1;max-height:2.3em;overflow:hidden}
+.lbl .s{font-size:8pt}.lbl .p{font-size:13pt;font-weight:700}
+.lbl .t{display:flex;justify-content:space-between;align-items:baseline}
+.lbl .code{font:7pt "Courier New",monospace;text-align:center;letter-spacing:.5px}

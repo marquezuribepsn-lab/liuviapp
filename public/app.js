@@ -22,7 +22,7 @@ const articleLabel = (a) => [a.name, a.size && `Talle ${a.size}`, a.color].filte
 
 // ---------- Pestañas ----------
 let currentTab = 'venta';
-const loaders = { venta: () => {}, articulos: loadArticles, stock: loadStock, caja: loadCash, stats: loadStats };
+const loaders = { venta: () => {}, etiquetas: loadPrintTab, articulos: loadArticles, stock: loadStock, caja: loadCash, stats: loadStats };
 function showTab(name) {
   currentTab = name;
   $$('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
@@ -138,6 +138,9 @@ $('#charge').addEventListener('click', guard(async () => {
   const sale = await api('POST', '/sales', { items: cart.map((l) => ({ article_id: l.a.id, qty: l.qty })), discount_pct: Number($('#discount').value) || 0, payments });
   toast(`Venta #${sale.id} registrada${sale.change ? ` · Vuelto ${money(sale.change)}` : ''}`);
   resetSale(); await refreshCash();
+  const full = (await api('GET', '/sales')).find((x) => x.id === sale.id);
+  lastTicket = { ...full, change: sale.change };
+  if ($('#autoTicket').checked && full) printTicket(lastTicket);
 }));
 
 // ---------- Artículos ----------
@@ -148,7 +151,7 @@ async function loadArticles() {
     <tr><td>${esc(a.barcode || '—')}</td><td>${esc(a.name)}</td><td>${esc(a.category)}</td><td>${esc(a.size)}</td><td>${esc(a.color)}</td>
     <td class="num">${money(a.price)}</td><td class="num">${money(a.cost)}</td>
     <td class="num ${a.stock <= a.min_stock ? 'low' : ''}">${a.stock}</td>
-    <td><button class="link" data-edit="${a.id}">Editar</button><button class="link" data-del="${a.id}">Baja</button></td></tr>`).join('')
+    <td><button class="link" data-edit="${a.id}">Editar</button><button class="link" data-lbl="${a.id}">Etiqueta</button><button class="link" data-del="${a.id}">Baja</button></td></tr>`).join('')
     || '<tr><td colspan="9" class="muted">Sin artículos</td></tr>';
   window._arts = rows;
   const cats = await api('GET', '/articles');
@@ -184,6 +187,7 @@ $('#artForm').addEventListener('submit', guard(async (e) => {
   $('#artDialog').close(); toast('Artículo guardado'); await loadArticles();
 }));
 $('#artTable').addEventListener('click', guard(async (e) => {
+  if (e.target.dataset.lbl) { addLabel(window._arts.find((a) => a.id == e.target.dataset.lbl)); showTab('etiquetas'); return; }
   if (e.target.dataset.edit) openArtDialog(window._arts.find((a) => a.id == e.target.dataset.edit));
   if (e.target.dataset.del && confirm('¿Dar de baja este artículo? Se conserva el historial de ventas.')) {
     await api('DELETE', '/articles/' + e.target.dataset.del); await loadArticles();
@@ -241,7 +245,7 @@ async function loadCash() {
   const sales = await api('GET', '/sales');
   $('#salesTable tbody').innerHTML = sales.map((s) => `<tr style="${s.voided ? 'opacity:.5;text-decoration:line-through' : ''}"><td>${s.id}</td><td>${time(s.created_at)}</td>
     <td>${s.items.map((i) => `${i.qty}× ${esc(i.name)}`).join('<br>')}</td><td>${s.payments.map((p) => `${p.method} ${money(p.amount)}`).join('<br>')}</td>
-    <td class="num">${money(s.total)}</td><td>${s.voided ? 'Anulada' : cash ? `<button class="link" data-void="${s.id}">Anular</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Sin ventas hoy</td></tr>';
+    <td class="num">${money(s.total)}</td><td><button class="link" data-reprint="${s.id}">Ticket</button>${s.voided ? 'Anulada' : cash ? `<button class="link" data-void="${s.id}">Anular</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Sin ventas hoy</td></tr>';
   const sessions = await api('GET', '/cash/sessions');
   $('#sessionsTable tbody').innerHTML = sessions.map((s) => {
     const d = s.counted_cash == null ? null : s.counted_cash - s.expected_cash;
@@ -268,6 +272,11 @@ $('#closeForm').addEventListener('submit', guard(async (e) => {
   await loadCash();
 }));
 $('#salesTable').addEventListener('click', guard(async (e) => {
+  if (e.target.dataset.reprint) {
+    const s = (await api('GET', '/sales')).find((x) => x.id == e.target.dataset.reprint);
+    if (s) printTicket(s);
+    return;
+  }
   if (e.target.dataset.void && confirm('¿Anular la venta? Se devuelve el stock y se registra el egreso en caja.')) {
     await api('POST', `/sales/${e.target.dataset.void}/void`); toast('Venta anulada'); await loadCash();
   }
@@ -294,6 +303,113 @@ $('#groupSeg').addEventListener('click', guard(async (e) => {
   $$('#groupSeg button').forEach((b) => b.classList.toggle('active', b === e.target));
   await loadStats();
 }));
+
+// ---------- Impresión ----------
+const SETTINGS_KEY = 'liuvi.print';
+const settings = (() => {
+  const d = { name: '', info: '', paper: '80', footer: '¡Gracias por su compra!', auto: false };
+  try { return { ...d, ...JSON.parse(localStorage.getItem(SETTINGS_KEY)) }; } catch { return d; }
+})();
+const saveSettings = () => { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch { /* sin almacenamiento */ } };
+let lastTicket = null;
+
+// Imprime `html` solo (el resto de la página se oculta con CSS) con el tamaño de página indicado.
+function printHtml(html, pageCss) {
+  const area = $('#printArea');
+  area.innerHTML = html;
+  let st = $('#pageStyle');
+  if (!st) { st = document.createElement('style'); st.id = 'pageStyle'; document.head.append(st); }
+  st.textContent = `@page{${pageCss}}`;
+  document.body.classList.add('printing');
+  const done = () => { document.body.classList.remove('printing'); area.innerHTML = ''; window.removeEventListener('afterprint', done); };
+  window.addEventListener('afterprint', done);
+  window.print();
+}
+
+function ticketHtml(s) {
+  const w = settings.paper === '58' ? '48mm' : '72mm';
+  const row = (a, b, cls = '') => `<div class="r ${cls}"><span>${a}</span><span>${b}</span></div>`;
+  const pays = s.payments.map((p) => (p.method === 'efectivo' && s.change
+    ? row('Efectivo recibido', money(p.amount + s.change)) + row('Vuelto', money(s.change))
+    : row(p.method[0].toUpperCase() + p.method.slice(1), money(p.amount)))).join('');
+  return `<div class="ticket" style="width:${w}">
+    <div class="c b" style="font-size:15px">${esc(settings.name || 'Ticket de venta')}</div>
+    ${settings.info ? `<div class="c">${esc(settings.info)}</div>` : ''}
+    <div class="c">${esc((s.created_at || '').slice(0, 16).replace('T', ' '))} · Ticket #${s.id}</div>
+    ${s.voided ? '<div class="c b">*** VENTA ANULADA ***</div>' : ''}
+    <hr>
+    ${s.items.map((i) => `<div>${esc(i.name)}</div>` + row(`${i.qty} x ${money(i.price)}`, money(i.qty * i.price))).join('')}
+    <hr>
+    ${s.discount ? row('Subtotal', money(s.subtotal)) + row('Descuento', '-' + money(s.discount)) : ''}
+    ${row('TOTAL', money(s.total), 'tot')}
+    <hr>${pays}
+    <hr><div class="c">${esc(settings.footer)}</div>
+    <div class="c" style="font-size:10px">Documento no válido como factura</div>
+  </div>`;
+}
+const printTicket = (s) => printHtml(ticketHtml(s), 'size:' + (settings.paper === '58' ? '58mm' : '80mm') + ' auto;margin:3mm');
+$('#lastTicket').addEventListener('click', () => (lastTicket ? printTicket(lastTicket) : toast('Todavía no hay un ticket para reimprimir', true)));
+$('#autoTicket').checked = settings.auto;
+$('#autoTicket').addEventListener('change', (e) => { settings.auto = e.target.checked; saveSettings(); });
+
+// Etiquetas
+let labels = []; // { a, copies }
+function addLabel(a) {
+  const l = labels.find((x) => x.a.id === a.id);
+  if (l) l.copies++; else labels.push({ a, copies: 1 });
+  renderLabels();
+}
+function renderLabels() {
+  $('#lblTable tbody').innerHTML = labels.map((l, i) => `<tr><td>${esc(articleLabel(l.a))}</td>
+    <td>${l.a.barcode ? esc(l.a.barcode) : '<span class="low">sin código</span>'}</td>
+    <td><input type="number" min="1" max="500" value="${l.copies}" data-copies="${i}" style="width:80px"></td>
+    <td><button class="link" data-lrm="${i}">✕</button></td></tr>`).join('') || '<tr><td colspan="4" class="muted">Agregá artículos para imprimir sus etiquetas</td></tr>';
+}
+$('#lblTable').addEventListener('input', (e) => { if (e.target.dataset.copies) labels[e.target.dataset.copies].copies = Math.max(1, Math.min(500, Number(e.target.value) || 1)); });
+$('#lblTable').addEventListener('click', (e) => { if (e.target.dataset.lrm !== undefined) { labels.splice(Number(e.target.dataset.lrm), 1); renderLabels(); } });
+$('#lblClear').addEventListener('click', () => { labels = []; renderLabels(); });
+$('#lblStock').addEventListener('click', () => { labels.forEach((l) => (l.copies = Math.max(1, l.a.stock))); renderLabels(); });
+$('#lblScan').addEventListener('keydown', guard(async (e) => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  const code = e.target.value.trim();
+  if (!code) return;
+  try { addLabel(await api('GET', '/articles/barcode/' + encodeURIComponent(code))); e.target.value = ''; $('#lblResults').innerHTML = ''; }
+  catch {
+    const list = await searchInto($('#lblResults'), code, (a) => { addLabel(a); $('#lblResults').innerHTML = ''; e.target.value = ''; });
+    if (list.length === 1) { addLabel(list[0]); $('#lblResults').innerHTML = ''; e.target.value = ''; }
+    else if (!list.length) toast('No encontrado', true);
+  }
+}));
+$('#lblScan').addEventListener('input', debounce(guard(() => {
+  const q = $('#lblScan').value.trim();
+  return searchInto($('#lblResults'), q, (a) => { addLabel(a); $('#lblResults').innerHTML = ''; $('#lblScan').value = ''; });
+})));
+function labelHtml(a, w, h) {
+  return `<div class="lbl" style="--w:${w}mm;--h:${h}mm">
+    <div class="n">${esc(a.name)}</div>
+    <div class="t"><span class="s">${esc([a.size && `Talle ${a.size}`, a.color].filter(Boolean).join(' · '))}</span><span class="p">${money(a.price).replace(/,00$/, '')}</span></div>
+    <div>${Barcode.svg(a.barcode, { height: Math.max(6, Math.round(h * 0.33)) + 'mm' })}<div class="code">${esc(a.barcode)}</div></div></div>`;
+}
+$('#lblPrint').addEventListener('click', guard(async () => {
+  if (!labels.length) throw new Error('Agregá al menos un artículo');
+  const sinCodigo = labels.filter((l) => !l.a.barcode);
+  if (sinCodigo.length) throw new Error(`Sin código de barras: ${sinCodigo.map((l) => l.a.name).join(', ')}. Editá el artículo y usá "Generar".`);
+  const w = Math.max(20, Number($('#lblW').value) || 50), h = Math.max(15, Number($('#lblH').value) || 30);
+  const sheet = $('#lblFormat').value === 'sheet';
+  const html = labels.flatMap((l) => Array(l.copies).fill(labelHtml(l.a, w, h))).join('');
+  printHtml(`<div class="${sheet ? 'sheet' : 'roll'}">${html}</div>`, sheet ? 'size:A4;margin:8mm' : `size:${w}mm ${h}mm;margin:0`);
+}));
+
+// Ajustes
+const bindSetting = (id, key) => { const el = $('#' + id); el.value = settings[key]; el.addEventListener('input', () => { settings[key] = el.value; saveSettings(); }); };
+bindSetting('setName', 'name'); bindSetting('setInfo', 'info'); bindSetting('setPaper', 'paper'); bindSetting('setFooter', 'footer');
+$('#testTicket').addEventListener('click', () => printTicket({
+  id: 0, created_at: new Date().toLocaleString('sv-SE'), subtotal: 30000, discount: 3000, total: 27000, change: 3000,
+  items: [{ name: 'Remera lisa · M · Negro', qty: 2, price: 10000 }, { name: 'Gorra · U', qty: 1, price: 10000 }],
+  payments: [{ method: 'efectivo', amount: 27000 }],
+}));
+function loadPrintTab() { renderLabels(); $('#lblScan').focus(); }
 
 // ---------- Inicio ----------
 renderCart();
