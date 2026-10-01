@@ -1,4 +1,4 @@
-# Liuvi · Sistema de ventas para local de ropa
+# Liu Vi · Sistema de ventas para local de ropa
 
 Sin dependencias: solo **Node.js 22.13+** (usa SQLite integrado). Los datos quedan en `data/liuvi.db`.
 
@@ -9,6 +9,10 @@ Para que arranque solo al prender la PC: botón derecho sobre `iniciar.bat` → 
 npm start        # http://localhost:3000   (PORT=8080 npm start para cambiar el puerto)
 npm test
 ```
+
+## Identidad visual
+
+La interfaz usa el logo y la paleta de Liu Vi: verde agua `#37c2b9` (el del logo) y blanco, con tonos más oscuros del mismo verde para botones y textos (contraste mínimo 4,5:1) y modo oscuro automático. Los archivos del logo están en `public/img/`: `logo-blanco.png` (encabezado y acceso), `logo-tinta.png` (ticket, para imprimir sobre papel blanco), `favicon.png` y el original en `logo-original.png`. Los colores se cambian en un solo lugar: las variables al principio de `public/style.css`.
 
 ## Funciones
 

@@ -10,7 +10,10 @@ import {
 const PUBLIC_DIR = join(fileURLToPath(new URL('.', import.meta.url)), 'public');
 const METHODS = ['efectivo', 'tarjeta', 'transferencia'];
 const COOKIE = 'liuvi_sid';
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
+const MIME = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
+};
 
 class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -607,7 +610,8 @@ export function createApp(db) {
       const rel = url.pathname === '/' ? 'index.html' : normalize(url.pathname).replace(/^(\.\.[/\\])+/, '');
       const file = join(PUBLIC_DIR, rel);
       if (!file.startsWith(PUBLIC_DIR) || !existsSync(file)) { res.writeHead(404); return res.end('No encontrado'); }
-      res.writeHead(200, { 'Content-Type': MIME[extname(file)] || 'application/octet-stream' });
+      const type = MIME[extname(file)] || 'application/octet-stream';
+      res.writeHead(200, { 'Content-Type': type, ...(type.startsWith('image/') && { 'Cache-Control': 'public, max-age=86400' }) });
       res.end(readFileSync(file));
     } catch (e) {
       if (e instanceof HttpError) return send(e.status, { error: e.message });
