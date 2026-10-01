@@ -387,8 +387,11 @@ export function createApp(db) {
       }
       const finalPayments = payments.filter((p) => p.amount > 0);
 
+      const customerName = String(body.customer_name ?? '').trim().slice(0, 120);
+      const customerDoc = String(body.customer_doc ?? '').trim().slice(0, 30);
       const { lastInsertRowid: saleId } = db.prepare(
-        'INSERT INTO sales (session_id,subtotal,discount,total,user_id) VALUES (?,?,?,?,?)').run(session.id, subtotal, discount, total, user.id);
+        'INSERT INTO sales (session_id,subtotal,discount,total,user_id,customer_name,customer_doc) VALUES (?,?,?,?,?,?,?)')
+        .run(session.id, subtotal, discount, total, user.id, customerName, customerDoc);
       for (const { a, qty } of lines) {
         const label = [a.brand, a.name, a.size, a.color].filter(Boolean).join(' · ');
         db.prepare('INSERT INTO sale_items (sale_id,article_id,name,qty,price,cost,brand) VALUES (?,?,?,?,?,?,?)')

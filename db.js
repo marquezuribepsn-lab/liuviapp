@@ -176,6 +176,8 @@ export function openDb(path = defaultDbPath()) {
     if (!db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
   };
   ensureColumn('sales', 'user_id');
+  ensureColumn('sales', 'customer_name');
+  ensureColumn('sales', 'customer_doc');
   ensureColumn('cash_movements', 'user_id');
   ensureColumn('stock_movements', 'user_id');
   ensureColumn('cash_sessions', 'opened_by');

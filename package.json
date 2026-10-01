@@ -1,6 +1,6 @@
 {
   "name": "liuviapp",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "description": "Sistema de ventas para local de ropa: stock, artículos, caja, estadísticas y lector de código de barras",
   "type": "module",
   "private": true,

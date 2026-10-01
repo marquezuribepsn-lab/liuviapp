@@ -149,3 +149,21 @@ button:disabled{opacity:.45;cursor:not-allowed;filter:none!important}
 
 #footVer{text-align:center;color:var(--muted);font-size:12px;padding:6px 0 18px}
 body.locked>footer{display:none}
+
+.pb{break-before:page}
+.cut{text-align:center;color:#555;font-size:11px;margin:6mm 0;overflow:hidden;white-space:nowrap}
+.comp{position:relative;font:12px/1.35 Arial,Helvetica,sans-serif;color:#000;background:#fff;break-inside:avoid}
+.comp .ch{display:flex;align-items:stretch;border:1px solid #000}
+.comp .ch>div{padding:8px 10px;flex:1}
+.comp .cl b{display:block;font-size:15px}
+.comp .cx{flex:0 0 34mm!important;text-align:center;border-left:1px solid #000;border-right:1px solid #000;display:flex;flex-direction:column;justify-content:center}
+.comp .cx b{font-size:34px;line-height:1}.comp .cx small{font-size:9px}
+.comp .cr b{font-size:16px;display:block}
+.comp .copy{margin-top:6px;font-weight:700;border:1px solid #000;display:inline-block;padding:2px 8px}
+.comp .cc{display:flex;gap:24px;border:1px solid #000;border-top:0;padding:6px 10px}
+.comp table{width:100%;border-collapse:collapse;margin-top:8px}
+.comp th{background:#eee!important;color:#000;text-align:left;border-bottom:1px solid #000;padding:4px 6px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.comp td{padding:4px 6px;border-bottom:1px solid #ccc}.comp .n{text-align:right;white-space:nowrap}.comp th:nth-child(n+2){text-align:right}
+.comp .ct{text-align:right;margin-top:8px}.comp .tot{font-size:18px;font-weight:700}.comp .cpay{color:#333;margin-top:2px}
+.comp .cf{text-align:center;margin-top:10px;font-size:11px}
+.comp .stamp{position:absolute;top:40%;left:20%;font-size:60px;font-weight:700;color:#c00;opacity:.25;transform:rotate(-20deg);border:6px solid #c00;padding:0 20px}
