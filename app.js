@@ -44,6 +44,17 @@ export function createApp(db) {
     return s;
   };
 
+  const ART = 'SELECT a.*, b.name AS brand FROM articles a LEFT JOIN brands b ON b.id = a.brand_id';
+
+  // Busca la marca sin distinguir mayúsculas; si no existe, la crea (evita duplicados por tipeo).
+  function resolveBrand(name) {
+    const n = String(name ?? '').trim();
+    if (!n) return null;
+    if (n.length > 40) throw bad('La marca no puede superar los 40 caracteres');
+    const found = db.prepare('SELECT id FROM brands WHERE name = ?').get(n);
+    return found ? found.id : db.prepare('INSERT INTO brands (name) VALUES (?)').run(n).lastInsertRowid;
+  }
+
   function articleFields(b, current = {}, canCost = true) {
     const name = String(b.name ?? current.name ?? '').trim();
     if (!name) throw bad('El nombre es obligatorio');
@@ -105,16 +116,17 @@ export function createApp(db) {
     const q = `%${(query.get('q') || '').trim()}%`;
     const all = query.get('all') === '1';
     const low = query.get('low') === '1';
+    const brand = query.get('brand_id') || null;
     return maskCost(db.prepare(`
-      SELECT * FROM articles
-      WHERE (? OR active = 1) AND (name LIKE ? OR barcode LIKE ? OR category LIKE ? OR color LIKE ? OR size LIKE ?)
-        AND (? = 0 OR stock <= min_stock)
-      ORDER BY name, size LIMIT 500
-    `).all(all ? 1 : 0, q, q, q, q, q, low ? 1 : 0), can);
+      ${ART}
+      WHERE (? OR a.active = 1) AND (a.name LIKE ? OR a.barcode LIKE ? OR a.category LIKE ? OR a.color LIKE ? OR a.size LIKE ? OR b.name LIKE ?)
+        AND (? = 0 OR a.stock <= a.min_stock) AND (? IS NULL OR a.brand_id = ?)
+      ORDER BY b.name, a.name, a.size LIMIT 500
+    `).all(all ? 1 : 0, q, q, q, q, q, q, low ? 1 : 0, brand, brand), can);
   });
 
   route('GET', '/api/articles/barcode/:code', ['articulos.ver', 'stock.ver'], ({ params, can }) => {
-    const a = db.prepare('SELECT * FROM articles WHERE barcode = ? AND active = 1').get(decodeURIComponent(params.code));
+    const a = db.prepare(`${ART} WHERE a.barcode = ? AND a.active = 1`).get(decodeURIComponent(params.code));
     if (!a) throw new HttpError(404, 'Código no encontrado');
     return maskCost(a, can);
   });
@@ -125,10 +137,10 @@ export function createApp(db) {
     return tx(db, () => {
       try {
         const { lastInsertRowid: id } = db.prepare(`
-          INSERT INTO articles (barcode,name,category,size,color,price,cost,stock,min_stock)
-          VALUES (?,?,?,?,?,?,?,0,?)`).run(f.barcode, f.name, f.category, f.size, f.color, f.price, f.cost, f.min_stock);
+          INSERT INTO articles (barcode,name,category,size,color,price,cost,stock,min_stock,brand_id)
+          VALUES (?,?,?,?,?,?,?,0,?,?)`).run(f.barcode, f.name, f.category, f.size, f.color, f.price, f.cost, f.min_stock, resolveBrand(body.brand));
         if (stock) moveStock(id, stock, 'inicial', null, user.id);
-        return { status: 201, data: maskCost(db.prepare('SELECT * FROM articles WHERE id=?').get(id), can) };
+        return { status: 201, data: maskCost(db.prepare(`${ART} WHERE a.id=?`).get(id), can) };
       } catch (e) {
         if (/UNIQUE/.test(e.message)) throw bad('Ya existe un artículo con ese código de barras');
         throw e;
@@ -141,19 +153,48 @@ export function createApp(db) {
     if (!cur) throw new HttpError(404, 'Artículo no encontrado');
     const f = articleFields(body, cur, can('costos.ver'));
     try {
-      db.prepare(`UPDATE articles SET barcode=?,name=?,category=?,size=?,color=?,price=?,cost=?,min_stock=?,active=? WHERE id=?`)
-        .run(f.barcode, f.name, f.category, f.size, f.color, f.price, f.cost, f.min_stock, body.active === undefined ? cur.active : (body.active ? 1 : 0), cur.id);
+      const brandId = body.brand === undefined ? cur.brand_id : resolveBrand(body.brand);
+      db.prepare(`UPDATE articles SET barcode=?,name=?,category=?,size=?,color=?,price=?,cost=?,min_stock=?,active=?,brand_id=? WHERE id=?`)
+        .run(f.barcode, f.name, f.category, f.size, f.color, f.price, f.cost, f.min_stock, body.active === undefined ? cur.active : (body.active ? 1 : 0), brandId, cur.id);
     } catch (e) {
       if (/UNIQUE/.test(e.message)) throw bad('Ya existe un artículo con ese código de barras');
       throw e;
     }
-    return maskCost(db.prepare('SELECT * FROM articles WHERE id=?').get(cur.id), can);
+    return maskCost(db.prepare(`${ART} WHERE a.id=?`).get(cur.id), can);
   });
 
   // Baja lógica: conserva el historial de ventas.
   route('DELETE', '/api/articles/:id', 'articulos.editar', ({ params }) => {
     const r = db.prepare('UPDATE articles SET active = 0 WHERE id = ?').run(params.id);
     if (!r.changes) throw new HttpError(404, 'Artículo no encontrado');
+    return { ok: true };
+  });
+
+  // Marcas
+  route('GET', '/api/brands', ['articulos.ver', 'stock.ver'], () => db.prepare(`
+    SELECT b.id, b.name, COUNT(a.id) AS articles FROM brands b
+    LEFT JOIN articles a ON a.brand_id = b.id AND a.active = 1 GROUP BY b.id ORDER BY b.name`).all());
+
+  const brandName = (n) => {
+    const v = String(n ?? '').trim();
+    if (!v || v.length > 40) throw bad('El nombre de la marca es obligatorio (máx. 40 caracteres)');
+    return v;
+  };
+  route('POST', '/api/brands', 'articulos.editar', ({ body }) => {
+    try { return { status: 201, data: { id: db.prepare('INSERT INTO brands (name) VALUES (?)').run(brandName(body.name)).lastInsertRowid } }; }
+    catch (e) { if (/UNIQUE/.test(e.message)) throw bad('Ya existe una marca con ese nombre'); throw e; }
+  });
+  route('PUT', '/api/brands/:id', 'articulos.editar', ({ params, body }) => {
+    if (!db.prepare('SELECT 1 FROM brands WHERE id=?').get(params.id)) throw new HttpError(404, 'Marca no encontrada');
+    try { db.prepare('UPDATE brands SET name=? WHERE id=?').run(brandName(body.name), params.id); }
+    catch (e) { if (/UNIQUE/.test(e.message)) throw bad('Ya existe una marca con ese nombre'); throw e; }
+    return { ok: true };
+  });
+  // Solo se borra una marca sin artículos (ni siquiera dados de baja), para no perder el historial.
+  route('DELETE', '/api/brands/:id', 'articulos.editar', ({ params }) => {
+    if (!db.prepare('SELECT 1 FROM brands WHERE id=?').get(params.id)) throw new HttpError(404, 'Marca no encontrada');
+    if (db.prepare('SELECT 1 FROM articles WHERE brand_id=?').get(params.id)) throw new HttpError(409, 'Hay artículos con esta marca: cambialos de marca antes de borrarla');
+    db.prepare('DELETE FROM brands WHERE id=?').run(params.id);
     return { ok: true };
   });
 
@@ -167,7 +208,7 @@ export function createApp(db) {
       if (!a) throw new HttpError(404, 'Artículo no encontrado');
       if (a.stock + qty < 0) throw bad(`Stock insuficiente (hay ${a.stock})`);
       moveStock(a.id, qty, reason, null, user.id);
-      return maskCost(db.prepare('SELECT * FROM articles WHERE id=?').get(a.id), can);
+      return maskCost(db.prepare(`${ART} WHERE a.id=?`).get(a.id), can);
     });
   });
 
@@ -266,7 +307,7 @@ export function createApp(db) {
       }
       let subtotal = 0;
       for (const [id, qty] of wanted) {
-        const a = db.prepare('SELECT * FROM articles WHERE id=? AND active=1').get(id);
+        const a = db.prepare(`${ART} WHERE a.id=? AND a.active=1`).get(id);
         if (!a) throw new HttpError(404, `Artículo ${id} no encontrado`);
         if (a.stock < qty) throw new HttpError(409, `Stock insuficiente de "${a.name}" ${a.size} (hay ${a.stock})`);
         lines.push({ a, qty });
@@ -290,9 +331,9 @@ export function createApp(db) {
       const { lastInsertRowid: saleId } = db.prepare(
         'INSERT INTO sales (session_id,subtotal,discount,total,user_id) VALUES (?,?,?,?,?)').run(session.id, subtotal, discount, total, user.id);
       for (const { a, qty } of lines) {
-        const label = [a.name, a.size, a.color].filter(Boolean).join(' · ');
-        db.prepare('INSERT INTO sale_items (sale_id,article_id,name,qty,price,cost) VALUES (?,?,?,?,?,?)')
-          .run(saleId, a.id, label, qty, a.price, a.cost);
+        const label = [a.brand, a.name, a.size, a.color].filter(Boolean).join(' · ');
+        db.prepare('INSERT INTO sale_items (sale_id,article_id,name,qty,price,cost,brand) VALUES (?,?,?,?,?,?,?)')
+          .run(saleId, a.id, label, qty, a.price, a.cost, a.brand);
         moveStock(a.id, -qty, 'venta', saleId, user.id);
       }
       for (const p of finalPayments) {
@@ -350,7 +391,7 @@ export function createApp(db) {
     return rows.reverse().map((r) => ({ ...r, profit: can('costos.ver') ? r.profit : null, avg_ticket: r.sales ? round2(r.total / r.sales) : 0 }));
   });
 
-  route('GET', '/api/stats/breakdown', 'estadisticas.ver', ({ query }) => {
+  route('GET', '/api/stats/breakdown', 'estadisticas.ver', ({ query, can }) => {
     const g = GROUPS[query.get('group') || 'day'];
     if (!g) throw bad('Agrupación inválida');
     // Período actual según la agrupación elegida.
@@ -367,7 +408,14 @@ export function createApp(db) {
     const bySeller = db.prepare(`
       SELECT COALESCE(u.name, 'Sin usuario') AS seller, COUNT(*) AS sales, ROUND(SUM(s.total),2) AS total
       FROM sales s LEFT JOIN users u ON u.id = s.user_id WHERE ${inPeriod} GROUP BY s.user_id ORDER BY total DESC`).all(cur);
-    return { period: cur, ...totals, byMethod, topArticles, bySeller };
+    // A precio de lista (antes de descuentos), igual que «más vendidos». La ganancia solo con permiso de costos.
+    const byBrand = db.prepare(`
+      SELECT COALESCE(i.brand, 'Sin marca') AS brand, SUM(i.qty) AS units, ROUND(SUM(i.qty*i.price),2) AS total,
+             ROUND(SUM(i.qty*(i.price-i.cost)),2) AS profit
+      FROM sale_items i JOIN sales s ON s.id = i.sale_id WHERE ${inPeriod}
+      GROUP BY COALESCE(i.brand, 'Sin marca') ORDER BY total DESC`).all(cur)
+      .map((r) => ({ ...r, profit: can('costos.ver') ? r.profit : null }));
+    return { period: cur, ...totals, byMethod, topArticles, bySeller, byBrand };
   });
 
 

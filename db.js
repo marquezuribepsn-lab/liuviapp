@@ -88,6 +88,11 @@ export function openDb(path = defaultDbPath()) {
       amount  REAL NOT NULL CHECK (amount > 0)
     );
 
+    CREATE TABLE IF NOT EXISTS brands (
+      id   INTEGER PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE COLLATE NOCASE
+    );
+
     CREATE TABLE IF NOT EXISTS roles (
       id          INTEGER PRIMARY KEY,
       name        TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -118,14 +123,22 @@ export function openDb(path = defaultDbPath()) {
   `);
 
   // Quién hizo cada operación. ALTER para bases creadas antes de existir los usuarios.
-  const ensureColumn = (table, col) => {
-    if (!db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} INTEGER`);
+  const ensureColumn = (table, col, type = 'INTEGER') => {
+    if (!db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
   };
   ensureColumn('sales', 'user_id');
   ensureColumn('cash_movements', 'user_id');
   ensureColumn('stock_movements', 'user_id');
   ensureColumn('cash_sessions', 'opened_by');
   ensureColumn('cash_sessions', 'closed_by');
+  ensureColumn('articles', 'brand_id');
+  ensureColumn('sale_items', 'brand', 'TEXT'); // marca al momento de vender, para las estadísticas por marca
+
+  // Marcas que maneja el local (se pueden agregar, renombrar y borrar desde Artículos).
+  if (!db.prepare('SELECT 1 FROM brands LIMIT 1').get()) {
+    const ins = db.prepare('INSERT INTO brands (name) VALUES (?)');
+    for (const b of ['Koxis', 'Adicta', 'Inversa']) ins.run(b);
+  }
 
   if (!db.prepare('SELECT 1 FROM roles LIMIT 1').get()) {
     const ins = db.prepare('INSERT INTO roles (name, permissions, is_admin) VALUES (?,?,?)');

@@ -5,6 +5,9 @@ Sin dependencias: solo **Node.js 22.13+** (usa SQLite integrado). Los datos qued
 **En Windows**: hacé doble clic en `iniciar.bat`. Revisa que Node.js esté instalado, inicia el sistema y abre el navegador. No cierres esa ventana mientras vendés; para apagarlo, cerrala.
 Para que arranque solo al prender la PC: botón derecho sobre `iniciar.bat` → *Crear acceso directo*, presioná `Win + R`, escribí `shell:startup` y pegá el acceso directo en esa carpeta.
 
+**En Mac**: hacé doble clic en `iniciar.command` (hace lo mismo que el `.bat`: revisa Node.js, inicia el sistema y abre el navegador). La primera vez macOS puede decir que viene de un desarrollador no identificado: botón derecho sobre el archivo → *Abrir* → *Abrir*. Si dice «permiso denegado», abrí Terminal en la carpeta y ejecutá `chmod +x iniciar.command`. Para que arranque solo: *Ajustes del Sistema → General → Ítems de inicio* y agregá `iniciar.command`.
+Para imprimir tickets y etiquetas conviene usar Chrome, Edge o Firefox: Safari no respeta bien el tamaño de página que pide el sistema.
+
 ```bash
 npm start        # http://localhost:3000   (PORT=8080 npm start para cambiar el puerto)
 npm test
@@ -17,6 +20,7 @@ La interfaz usa el logo y la paleta de Liu Vi: verde agua `#37c2b9` (el del logo
 ## Funciones
 
 - **Artículos**: cada fila es un SKU (artículo + talle + color) con código de barras, precio, costo, stock y stock mínimo. Baja lógica para conservar el historial.
+- **Marcas**: vienen cargadas *Koxis*, *Adicta* e *Inversa*. Cada artículo tiene su marca (se elige o se escribe: si no existe se crea, sin duplicar por mayúsculas), se puede filtrar y buscar por marca, y la marca sale en las etiquetas, en el ticket y en las estadísticas de ventas por marca. Las marcas se agregan, renombran y borran (solo las que no tienen artículos) desde la pestaña *Artículos*.
 - **Stock**: ingresos de mercadería, devoluciones y ajustes (con historial de movimientos), valor del inventario y alertas de stock bajo. Las ventas descuentan stock y las anulaciones lo devuelven.
 - **Caja**: apertura con fondo inicial, ingresos y egresos manuales, cierre con efectivo contado y diferencia contra lo esperado, historial de cajas. No se puede vender con la caja cerrada.
 - **Ventas**: pago en efectivo, tarjeta o transferencia (se puede combinar), descuento %, vuelto y anulación.
