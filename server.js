@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
 import { openDb, defaultDbPath, migrateLegacyDb, dataSummary, appVersion, looksTemporary, clearSessionsIfRequired } from './db.js';
+import { openBrowser, probeInstance, portBusyMessage } from './launch.js';
 import { createApp } from './app.js';
 
 const port = Number(process.env.PORT) || 3000;
@@ -15,8 +16,8 @@ clearSessionsIfRequired(db); // al abrir el programa hay que iniciar sesión (co
 const app = createApp(db);
 app.backups.start();
 const server = createServer(app);
-server.on('error', (e) => {
-  if (e.code === 'EADDRINUSE') console.error(`El sistema ya esta abierto (el puerto ${port} esta en uso). Usa la ventana o pestana que ya tenias.`);
+server.on('error', async (e) => {
+  if (e.code === 'EADDRINUSE') console.error(portBusyMessage(port, appVersion(), await probeInstance(port)));
   else console.error('No se pudo iniciar:', e.message);
   process.exit(1);
 });
@@ -27,6 +28,8 @@ server.listen(port, host, () => {
   console.log(s.users + s.articles + s.sales === 0
     ? 'Datos guardados: ninguno todavía (base nueva)'
     : `Datos guardados: ${s.users} usuario(s), ${s.articles} artículo(s), ${s.sales} venta(s)`);
+  // El navegador se abre recién ahora (con el sistema ya funcionando): si el puerto estaba ocupado, no se abre nada.
+  if (process.env.LIUVI_OPEN === '1') openBrowser(`http://localhost:${port}`);
   if (looksTemporary()) console.log('\nATENCIÓN: el programa está en una carpeta temporal o dentro de un ZIP.\nExtraé el ZIP completo (clic derecho > Extraer todo) en una carpeta fija, por ejemplo Documentos, y abrí iniciar.bat desde ahí.');
   if (host !== '127.0.0.1' && host !== 'localhost') console.log(`Atención: accesible desde la red (${host}).`);
 });

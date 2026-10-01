@@ -4,9 +4,8 @@ import { mkdtempSync, cpSync, mkdirSync, existsSync, rmSync, readdirSync } from 
 import { tmpdir } from 'node:os';
 import { join, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawn } from 'node:child_process';
-import { createServer } from 'node:net';
 import { openDb, dataDirFor, migrateLegacyDb } from '../db.js';
+import { copyProgram, runServer } from './helpers.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const tmp = (p = 'liuvi-dd-') => mkdtempSync(join(tmpdir(), p));
@@ -47,26 +46,7 @@ test('migración: trae la base vieja (<programa>/data) sin tocarla y sin pisar u
   rmSync(dir, { recursive: true, force: true });
 });
 
-// ---- Extremo a extremo: el problema real (programa en otra carpeta => "se borró el usuario") ----
-const freePort = () => new Promise((res) => { const s = createServer().listen(0, () => { const p = s.address().port; s.close(() => res(p)); }); });
-function copyProgram(dest) {
-  mkdirSync(dest, { recursive: true });
-  for (const f of readdirSync(ROOT)) if (/\.js$/.test(f) || f === 'package.json') cpSync(join(ROOT, f), join(dest, f)); // todos los módulos del programa
-  cpSync(join(ROOT, 'public'), join(dest, 'public'), { recursive: true });
-}
-async function runServer(programDir, env) {
-  const port = await freePort();
-  const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', 'server.js'], { cwd: programDir, env: { ...process.env, PORT: String(port), DB_PATH: '', ...env } });
-  let out = '';
-  child.stdout.on('data', (d) => (out += d));
-  child.stderr.on('data', (d) => (out += d));
-  for (let i = 0; i < 100 && !out.includes('listo'); i++) await new Promise((r) => setTimeout(r, 50));
-  assert.ok(out.includes('listo'), 'el servidor no arrancó: ' + out);
-  const base = `http://127.0.0.1:${port}`;
-  const me = async () => (await (await fetch(base + '/api/auth/me')).json()).setupNeeded;
-  return { out: () => out, me, base, kill: (sig = 'SIGKILL') => new Promise((r) => { child.once('exit', r); child.kill(sig); }) };
-}
-
+// ---- Extremo a extremo: el problema real (programa en otra carpeta => «se borró el usuario») ----
 test('E2E: el usuario sobrevive a un corte brusco y a abrir el programa desde OTRA carpeta', async () => {
   const work = tmp('liuvi-e2e-'), datos = join(work, 'datos');
   const p1 = join(work, 'ZIP-viejo'), p2 = join(work, 'ZIP-nuevo');
