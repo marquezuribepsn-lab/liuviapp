@@ -1,11 +1,24 @@
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync, existsSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { mkdirSync, existsSync, readFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_ROLES } from './auth.js';
 
-const APP_DIR = dirname(fileURLToPath(import.meta.url));
+export const APP_DIR = dirname(fileURLToPath(import.meta.url));
+export const appVersion = () => { try { return JSON.parse(readFileSync(join(APP_DIR, 'package.json'), 'utf8')).version; } catch { return '?'; } };
+
+// ¿El programa está en una carpeta temporal o dentro de un ZIP sin extraer? (se pierde al cerrarlo)
+export function looksTemporary(p = APP_DIR, tmp = tmpdir()) {
+  const n = (x) => String(x).replaceAll('\\', '/').toLowerCase();
+  return n(p).startsWith(n(tmp).replace(/\/$/, '') + '/') || /\/temp\//.test(n(p)) || /\.zip(\/|$)/.test(n(p));
+}
+
+// Resumen de lo guardado, para mostrarlo al iniciar y comprobar que los datos se conservan.
+export function dataSummary(db) {
+  const n = (t) => db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get().n;
+  return { users: n('users'), articles: n('articles'), sales: n('sales') };
+}
 
 // Carpeta fija de datos del usuario, FUERA de la carpeta del programa: así actualizar el programa
 // (bajar un ZIP nuevo, extraerlo en otro lado) o abrirlo desde cualquier carpeta nunca deja la base vacía.

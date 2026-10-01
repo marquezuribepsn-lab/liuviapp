@@ -27,7 +27,9 @@
     <label>Repetir contraseña <input name="password2" type="password" autocomplete="new-password" required minlength="8"></label>
     <div id="setupError" class="neg"></div>
     <button class="primary" style="width:100%">Crear administrador</button>
+    <p class="muted" id="setupDb" style="margin:12px 0 0"></p>
   </form>
+  <p id="verInfo" class="verInfo"></p>
 </div>
 <header>
   <h1><img class="logo" src="/img/logo-blanco.png" alt="Liu Vi"></h1>
@@ -283,7 +285,7 @@
     <div class="card">
       <h2>Estado</h2>
       <div id="bkStatus" class="muted"></div>
-      <p class="muted" style="margin:10px 0">Tu base de datos (usuarios, artículos, ventas) está en:<br><code id="bkDbFile" style="word-break:break-all"></code><br>Está fuera de la carpeta del programa: podés actualizarlo o moverlo sin perder nada. Para pasar el sistema a otra computadora, copiá ese archivo.</p>
+      <p class="muted" style="margin:10px 0">Tu base de datos (usuarios, artículos, ventas) está en:<br><code id="bkDbFile" style="word-break:break-all"></code><br>Versión del programa: <b id="bkVersion"></b><br>Está fuera de la carpeta del programa: podés actualizarlo o moverlo sin perder nada. Para pasar el sistema a otra computadora, copiá ese archivo.</p>
       <table id="bkFiles"><thead><tr><th>Archivo</th><th>Fecha</th><th>Tamaño</th></tr></thead><tbody></tbody></table>
     </div>
   </div>

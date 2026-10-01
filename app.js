@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createBackups } from './backup.js';
+import { appVersion } from './db.js';
 import {
   PERMISSIONS, ALL_PERMISSIONS, MIN_PASSWORD, SESSION_HOURS,
   hashPassword, verifyPassword, newToken, hashToken, parseCookies, createLimiter,
@@ -469,7 +470,9 @@ export function createApp(db) {
 
   route('GET', '/api/auth/me', 'public', ({ user }) => {
     const setupNeeded = !db.prepare('SELECT 1 FROM users LIMIT 1').get();
-    return { setupNeeded, user: user ? publicUser(user) : null, permissions: PERMISSIONS };
+    // Mientras no hay usuarios se informa dónde se busca la base (ayuda a detectar que se abrió otra copia del programa).
+    const dbFile = setupNeeded ? db.prepare('PRAGMA database_list').get()?.file || undefined : undefined;
+    return { setupNeeded, version: appVersion(), dbFile, user: user ? publicUser(user) : null, permissions: PERMISSIONS };
   });
 
   route('POST', '/api/auth/setup', 'public', ({ body, res }) => tx(db, () => {
