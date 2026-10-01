@@ -2,6 +2,9 @@
 
 Sin dependencias: solo **Node.js 22.13+** (usa SQLite integrado). Los datos quedan en `data/liuvi.db`.
 
+**En Windows**: hacé doble clic en `iniciar.bat`. Revisa que Node.js esté instalado, inicia el sistema y abre el navegador. No cierres esa ventana mientras vendés; para apagarlo, cerrala.
+Para que arranque solo al prender la PC: botón derecho sobre `iniciar.bat` → *Crear acceso directo*, presioná `Win + R`, escribí `shell:startup` y pegá el acceso directo en esa carpeta.
+
 ```bash
 npm start        # http://localhost:3000   (PORT=8080 npm start para cambiar el puerto)
 npm test
