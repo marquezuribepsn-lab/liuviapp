@@ -134,3 +134,15 @@ dialog.wide{width:min(640px,95vw)}
 #impErrTable td{font-size:13px}
 
 button:disabled{opacity:.45;cursor:not-allowed;filter:none!important}
+
+/* Stock: lista de búsqueda, listas con scroll y limpieza */
+.scrollBox{max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:10px}
+.scrollBox table{border-radius:0}
+.scrollBox thead th{position:sticky;top:0;background:var(--card);z-index:1;box-shadow:0 1px 0 var(--line)}
+#sbTable tbody tr{cursor:pointer}#sbTable tbody tr:hover td{background:var(--soft)}
+#sbTable tbody tr.sel td{background:var(--soft);font-weight:600}
+.adjSel{padding:9px 11px;border:1px dashed var(--line);border-radius:8px;margin:8px 0}
+.adjSel.on{border:1px solid var(--accent);background:var(--soft);color:var(--ink)}
+.dangerCard{border-color:var(--bad)}.dangerCard h2{color:var(--bad)}
+.opt{display:block;padding:10px 12px;border:1px solid var(--line);border-radius:10px;margin:8px 0;cursor:pointer;color:var(--ink);font-size:14px}
+.opt input{width:auto;margin-right:6px}.opt.sel{border-color:var(--bad);background:#b91c1c12}
