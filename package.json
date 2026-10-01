@@ -1,0 +1,12 @@
+{
+  "name": "liuviapp",
+  "version": "1.0.0",
+  "description": "Sistema de ventas para local de ropa: stock, artículos, caja, estadísticas y lector de código de barras",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server.js",
+    "test": "node --disable-warning=ExperimentalWarning test/smoke.test.js"
+  }
+}

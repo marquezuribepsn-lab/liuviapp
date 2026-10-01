@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Liuvi · Ventas</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>Liuvi</h1>
+  <nav id="tabs">
+    <button data-tab="venta" class="active">Vender</button>
+    <button data-tab="articulos">Artículos</button>
+    <button data-tab="stock">Stock</button>
+    <button data-tab="caja">Caja</button>
+    <button data-tab="stats">Estadísticas</button>
+  </nav>
+  <span id="cashBadge" class="badge"></span>
+</header>
+<div id="toast"></div>
+<main>
+
+<!-- VENDER -->
+<section id="venta" class="tab">
+  <div class="split">
+    <div>
+      <input id="scan" autofocus autocomplete="off" placeholder="Escaneá el código de barras o buscá por nombre y presioná Enter">
+      <div id="results" class="list"></div>
+    </div>
+    <div class="card">
+      <h2>Venta actual</h2>
+      <table id="cart"><thead><tr><th>Artículo</th><th>Cant.</th><th>Precio</th><th>Subtotal</th><th></th></tr></thead><tbody></tbody></table>
+      <div class="totals">
+        <label>Descuento % <input id="discount" type="number" min="0" max="100" value="0"></label>
+        <div>Subtotal: <b id="subtotal">$0</b></div>
+        <div class="big">Total: <b id="total">$0</b></div>
+      </div>
+      <h3>Medios de pago</h3>
+      <div class="pay">
+        <label>Efectivo <input id="payEfectivo" type="number" min="0" step="0.01"></label>
+        <label>Tarjeta <input id="payTarjeta" type="number" min="0" step="0.01"></label>
+        <label>Transferencia <input id="payTransferencia" type="number" min="0" step="0.01"></label>
+      </div>
+      <div class="row">
+        <button class="ghost" data-full="Efectivo">Todo efectivo</button>
+        <button class="ghost" data-full="Tarjeta">Todo tarjeta</button>
+        <button class="ghost" data-full="Transferencia">Todo transferencia</button>
+      </div>
+      <div id="change" class="muted"></div>
+      <div class="row">
+        <button id="charge" class="primary">Cobrar</button>
+        <button id="clearCart" class="ghost">Vaciar</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ARTÍCULOS -->
+<section id="articulos" class="tab" hidden>
+  <div class="row">
+    <input id="artSearch" placeholder="Buscar por nombre, código, categoría, talle, color…">
+    <label class="inline"><input type="checkbox" id="artLow"> Solo stock bajo</label>
+    <button id="artNew" class="primary">+ Nuevo artículo</button>
+  </div>
+  <table id="artTable"><thead><tr><th>Código</th><th>Artículo</th><th>Categoría</th><th>Talle</th><th>Color</th><th>Precio</th><th>Costo</th><th>Stock</th><th></th></tr></thead><tbody></tbody></table>
+  <dialog id="artDialog">
+    <form id="artForm" method="dialog">
+      <h2 id="artTitle">Artículo</h2>
+      <label>Código de barras <span class="row"><input name="barcode" placeholder="Escaneá o escribí"><button type="button" id="genCode" class="ghost">Generar</button></span></label>
+      <label>Nombre <input name="name" required></label>
+      <div class="grid2">
+        <label>Categoría <input name="category" list="cats"></label>
+        <datalist id="cats"></datalist>
+        <label>Talle <input name="size" placeholder="S, M, L, 42…"></label>
+        <label>Color <input name="color"></label>
+        <label>Precio venta <input name="price" type="number" min="0" step="0.01" required></label>
+        <label>Costo <input name="cost" type="number" min="0" step="0.01" value="0"></label>
+        <label>Stock mínimo <input name="min_stock" type="number" min="0" value="1"></label>
+        <label id="stockInitial">Stock inicial <input name="stock" type="number" min="0" value="0"></label>
+      </div>
+      <div class="row end"><button type="button" id="artCancel" class="ghost">Cancelar</button><button class="primary">Guardar</button></div>
+    </form>
+  </dialog>
+</section>
+
+<!-- STOCK -->
+<section id="stock" class="tab" hidden>
+  <div id="stockSummary" class="kpis"></div>
+  <div class="split">
+    <div class="card">
+      <h2>Ingreso / ajuste de stock</h2>
+      <form id="adjForm">
+        <label>Artículo (escaneá el código o buscá) <input id="adjScan" autocomplete="off"></label>
+        <div id="adjArticle" class="muted">Ningún artículo seleccionado</div>
+        <label>Motivo
+          <select id="adjReason"><option value="compra">Compra / ingreso de mercadería</option><option value="devolucion">Devolución de cliente</option><option value="ajuste">Ajuste de inventario</option></select>
+        </label>
+        <label>Cantidad (negativa para restar) <input id="adjQty" type="number" step="1" value="1"></label>
+        <button class="primary">Aplicar</button>
+      </form>
+    </div>
+    <div class="card"><h2>Últimos movimientos</h2><table id="movTable"><thead><tr><th>Fecha</th><th>Artículo</th><th>Cant.</th><th>Motivo</th></tr></thead><tbody></tbody></table></div>
+  </div>
+  <h2>Stock bajo o agotado</h2>
+  <table id="lowTable"><thead><tr><th>Artículo</th><th>Talle</th><th>Color</th><th>Stock</th><th>Mínimo</th></tr></thead><tbody></tbody></table>
+</section>
+
+<!-- CAJA -->
+<section id="caja" class="tab" hidden>
+  <div id="cajaClosed" class="card" hidden>
+    <h2>Caja cerrada</h2>
+    <form id="openForm" class="row"><label>Monto inicial en efectivo <input id="openAmount" type="number" min="0" step="0.01" value="0"></label><button class="primary">Abrir caja</button></form>
+  </div>
+  <div id="cajaOpen" hidden>
+    <div id="cajaKpis" class="kpis"></div>
+    <div class="split">
+      <div class="card">
+        <h2>Ingreso / egreso manual</h2>
+        <form id="movForm">
+          <label>Tipo <select id="movType"><option value="egreso">Egreso (gasto, retiro)</option><option value="ingreso">Ingreso</option></select></label>
+          <label>Medio <select id="movMethod"><option>efectivo</option><option>tarjeta</option><option>transferencia</option></select></label>
+          <label>Monto <input id="movAmount" type="number" min="0.01" step="0.01" required></label>
+          <label>Concepto <input id="movConcept" required placeholder="Ej: Bolsas, proveedor, retiro"></label>
+          <button class="primary">Registrar</button>
+        </form>
+        <hr>
+        <h2>Cerrar caja</h2>
+        <form id="closeForm">
+          <div id="expected" class="muted"></div>
+          <label>Efectivo contado <input id="closeCounted" type="number" min="0" step="0.01" required></label>
+          <label>Observaciones <input id="closeNote"></label>
+          <button class="danger">Cerrar caja</button>
+        </form>
+      </div>
+      <div class="card"><h2>Movimientos de la caja</h2><table id="cashMovTable"><thead><tr><th>Hora</th><th>Tipo</th><th>Medio</th><th>Monto</th><th>Concepto</th></tr></thead><tbody></tbody></table></div>
+    </div>
+  </div>
+  <h2>Ventas de hoy</h2>
+  <table id="salesTable"><thead><tr><th>#</th><th>Hora</th><th>Detalle</th><th>Pago</th><th>Total</th><th></th></tr></thead><tbody></tbody></table>
+  <h2>Historial de cajas</h2>
+  <table id="sessionsTable"><thead><tr><th>#</th><th>Apertura</th><th>Cierre</th><th>Inicial</th><th>Ventas</th><th>Esperado</th><th>Contado</th><th>Diferencia</th></tr></thead><tbody></tbody></table>
+</section>
+
+<!-- ESTADÍSTICAS -->
+<section id="stats" class="tab" hidden>
+  <div class="row">
+    <div class="seg" id="groupSeg">
+      <button data-g="day" class="active">Día</button><button data-g="week">Semana</button><button data-g="month">Mes</button><button data-g="year">Año</button>
+    </div>
+  </div>
+  <div id="statKpis" class="kpis"></div>
+  <div class="card"><h2 id="chartTitle">Ventas</h2><div id="chart"></div></div>
+  <div class="split">
+    <div class="card"><h2>Medios de pago (período actual)</h2><table id="methodTable"><tbody></tbody></table></div>
+    <div class="card"><h2>Más vendidos (período actual)</h2><table id="topTable"><tbody></tbody></table></div>
+  </div>
+  <table id="seriesTable"><thead><tr><th>Período</th><th>Ventas</th><th>Unidades</th><th>Total</th><th>Ticket prom.</th><th>Ganancia</th></tr></thead><tbody></tbody></table>
+</section>
+
+</main>
+<script src="/app.js"></script>
+</body>
+</html>
