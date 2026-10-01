@@ -5,6 +5,9 @@ Sin dependencias: solo **Node.js 22.13+** (usa SQLite integrado). Los datos qued
 **En Windows**: hacé doble clic en `iniciar.bat`. Revisa que Node.js esté instalado, inicia el sistema y abre el navegador. No cierres esa ventana mientras vendés; para apagarlo, cerrala.
 Para que arranque solo al prender la PC: botón derecho sobre `iniciar.bat` → *Crear acceso directo*, presioná `Win + R`, escribí `shell:startup` y pegá el acceso directo en esa carpeta.
 
+**En Mac**: hacé doble clic en `iniciar.command` (hace lo mismo que el `.bat`: revisa Node.js, inicia el sistema y abre el navegador). La primera vez macOS puede decir que viene de un desarrollador no identificado: botón derecho sobre el archivo → *Abrir* → *Abrir*. Si dice «permiso denegado», abrí Terminal en la carpeta y ejecutá `chmod +x iniciar.command`. Para que arranque solo: *Ajustes del Sistema → General → Ítems de inicio* y agregá `iniciar.command`.
+Para imprimir tickets y etiquetas conviene usar Chrome, Edge o Firefox: Safari no respeta bien el tamaño de página que pide el sistema.
+
 ```bash
 npm start        # http://localhost:3000   (PORT=8080 npm start para cambiar el puerto)
 npm test
