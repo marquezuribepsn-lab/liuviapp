@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { DEFAULT_ROLES } from './auth.js';
 
 export function openDb(path = process.env.DB_PATH || 'data/liuvi.db') {
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
@@ -83,9 +84,48 @@ export function openDb(path = process.env.DB_PATH || 'data/liuvi.db') {
       amount  REAL NOT NULL CHECK (amount > 0)
     );
 
+    CREATE TABLE IF NOT EXISTS roles (
+      id          INTEGER PRIMARY KEY,
+      name        TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      permissions TEXT NOT NULL DEFAULT '[]',   -- JSON con la lista de permisos
+      is_admin    INTEGER NOT NULL DEFAULT 0    -- rol protegido: siempre tiene todos los permisos
+    );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id            INTEGER PRIMARY KEY,
+      username      TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      name          TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      role_id       INTEGER NOT NULL REFERENCES roles(id),
+      active        INTEGER NOT NULL DEFAULT 1,
+      created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS user_sessions (
+      token_hash TEXT PRIMARY KEY,
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+
     CREATE INDEX IF NOT EXISTS idx_sales_created ON sales(created_at);
     CREATE INDEX IF NOT EXISTS idx_cashmov_session ON cash_movements(session_id);
     CREATE INDEX IF NOT EXISTS idx_stockmov_article ON stock_movements(article_id);
   `);
+
+  // Quién hizo cada operación. ALTER para bases creadas antes de existir los usuarios.
+  const ensureColumn = (table, col) => {
+    if (!db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} INTEGER`);
+  };
+  ensureColumn('sales', 'user_id');
+  ensureColumn('cash_movements', 'user_id');
+  ensureColumn('stock_movements', 'user_id');
+  ensureColumn('cash_sessions', 'opened_by');
+  ensureColumn('cash_sessions', 'closed_by');
+
+  if (!db.prepare('SELECT 1 FROM roles LIMIT 1').get()) {
+    const ins = db.prepare('INSERT INTO roles (name, permissions, is_admin) VALUES (?,?,?)');
+    for (const r of DEFAULT_ROLES) ins.run(r.name, JSON.stringify(r.permissions), r.is_admin);
+  }
   return db;
 }

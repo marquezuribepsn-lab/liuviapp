@@ -7,6 +7,7 @@ const time = (s) => s.slice(11, 16);
 async function api(method, path, body) {
   const res = await fetch('/api' + path, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
   const data = await res.json().catch(() => null);
+  if (res.status === 401 && !path.startsWith('/auth/')) showLogin();
   if (!res.ok) throw new Error(data?.error || 'Error de servidor');
   return data;
 }
@@ -16,13 +17,17 @@ function toast(msg, error = false) {
   t.textContent = msg; t.className = 'show' + (error ? ' error' : '');
   clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.className = ''), 3000);
 }
+let me = null; // { user, permissions } de la sesión
+const can = (p) => !!me?.user?.permissions.includes(p);
+const canAny = (...ps) => ps.some(can);
 const guard = (fn) => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message, true); } };
 const debounce = (fn, ms = 250) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 const articleLabel = (a) => [a.name, a.size && `Talle ${a.size}`, a.color].filter(Boolean).join(' · ');
 
 // ---------- Pestañas ----------
 let currentTab = 'venta';
-const loaders = { venta: () => {}, etiquetas: loadPrintTab, articulos: loadArticles, stock: loadStock, caja: loadCash, stats: loadStats };
+const loaders = { venta: () => {}, etiquetas: loadPrintTab, articulos: loadArticles, stock: loadStock, caja: loadCash, stats: loadStats, usuarios: loadUsers };
+const TAB_PERMS = { venta: ['ventas.cobrar'], articulos: ['articulos.ver'], etiquetas: ['articulos.ver'], stock: ['stock.ver'], caja: ['caja.ver', 'caja.operar', 'ventas.cobrar'], stats: ['estadisticas.ver'], usuarios: ['usuarios.admin'] };
 function showTab(name) {
   currentTab = name;
   $$('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
@@ -149,9 +154,9 @@ async function loadArticles() {
   const rows = await api('GET', `/articles?q=${q}&low=${$('#artLow').checked ? 1 : 0}`);
   $('#artTable tbody').innerHTML = rows.map((a) => `
     <tr><td>${esc(a.barcode || '—')}</td><td>${esc(a.name)}</td><td>${esc(a.category)}</td><td>${esc(a.size)}</td><td>${esc(a.color)}</td>
-    <td class="num">${money(a.price)}</td><td class="num">${money(a.cost)}</td>
+    <td class="num">${money(a.price)}</td><td class="num col-cost">${money(a.cost)}</td>
     <td class="num ${a.stock <= a.min_stock ? 'low' : ''}">${a.stock}</td>
-    <td><button class="link" data-edit="${a.id}">Editar</button><button class="link" data-lbl="${a.id}">Etiqueta</button><button class="link" data-del="${a.id}">Baja</button></td></tr>`).join('')
+    <td>${can('articulos.editar') ? `<button class="link" data-edit="${a.id}">Editar</button>` : ''}<button class="link" data-lbl="${a.id}">Etiqueta</button>${can('articulos.editar') ? `<button class="link" data-del="${a.id}">Baja</button>` : ''}</td></tr>`).join('')
     || '<tr><td colspan="9" class="muted">Sin artículos</td></tr>';
   window._arts = rows;
   const cats = await api('GET', '/articles');
@@ -198,10 +203,10 @@ $('#artTable').addEventListener('click', guard(async (e) => {
 let adjArticle = null;
 async function loadStock() {
   const s = await api('GET', '/stock/summary');
-  $('#stockSummary').innerHTML = [['Artículos (SKU)', s.skus], ['Unidades', s.units], ['Valor a costo', money(s.cost_value)], ['Valor a precio de venta', money(s.retail_value)], ['Con stock bajo', s.low]]
+  $('#stockSummary').innerHTML = [['Artículos (SKU)', s.skus], ['Unidades', s.units], ['Valor a costo', s.cost_value == null ? '—' : money(s.cost_value)], ['Valor a precio de venta', money(s.retail_value)], ['Con stock bajo', s.low]]
     .map(([k, v]) => `<div class="kpi"><span>${k}</span><b>${v}</b></div>`).join('');
   const movs = await api('GET', '/stock/movements');
-  $('#movTable tbody').innerHTML = movs.map((m) => `<tr><td>${esc(m.created_at.slice(5, 16))}</td><td>${esc(articleLabel(m))}</td><td class="num ${m.qty < 0 ? 'neg' : 'pos'}">${m.qty > 0 ? '+' : ''}${m.qty}</td><td>${esc(m.reason)}</td></tr>`).join('');
+  $('#movTable tbody').innerHTML = movs.map((m) => `<tr><td>${esc(m.created_at.slice(5, 16))}</td><td>${esc(articleLabel(m))}</td><td class="num ${m.qty < 0 ? 'neg' : 'pos'}">${m.qty > 0 ? '+' : ''}${m.qty}</td><td>${esc(m.reason)}</td><td>${esc(m.user_name || '')}</td></tr>`).join('');
   const low = await api('GET', '/articles?low=1');
   $('#lowTable tbody').innerHTML = low.map((a) => `<tr><td>${esc(a.name)}</td><td>${esc(a.size)}</td><td>${esc(a.color)}</td><td class="low">${a.stock}</td><td>${a.min_stock}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">Todo en orden</td></tr>';
 }
@@ -230,28 +235,41 @@ $('#adjForm').addEventListener('submit', guard(async (e) => {
 // ---------- Caja ----------
 async function loadCash() {
   await refreshCash();
+  const operar = can('caja.operar'), ver = can('caja.ver');
   $('#cajaClosed').hidden = !!cash; $('#cajaOpen').hidden = !cash;
+  $('#openForm').hidden = !operar;
+  $('#cajaClosed').querySelector('.muted')?.remove();
+  if (!cash && !operar) $('#cajaClosed').insertAdjacentHTML('beforeend', '<p class="muted">La caja está cerrada. Pedile a quien tenga permiso que la abra.</p>');
   if (cash) {
     const m = cash.byMethod;
-    $('#cajaKpis').innerHTML = [
-      ['Efectivo esperado en caja', money(cash.expected_cash_now)], ['Fondo inicial', money(cash.opening_amount)],
-      ['Efectivo neto', money(m.efectivo.neto)], ['Tarjeta', money(m.tarjeta.neto)], ['Transferencia', money(m.transferencia.neto)],
-      ['Ventas', `${cash.sales_count} · ${money(cash.sales_total)}`],
-    ].map(([k, v]) => `<div class="kpi"><span>${k}</span><b>${v}</b></div>`).join('');
-    $('#expected').textContent = `Efectivo esperado: ${money(cash.expected_cash_now)}`;
-    const movs = await api('GET', '/cash/movements');
-    $('#cashMovTable tbody').innerHTML = movs.map((x) => `<tr><td>${time(x.created_at)}</td><td class="${x.type === 'ingreso' ? 'pos' : 'neg'}">${x.type}</td><td>${x.method}</td><td class="num">${money(x.amount)}</td><td>${esc(x.concept)}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">Sin movimientos</td></tr>';
+    $('#cajaKpis').hidden = !(ver || operar);
+    if (ver || operar) {
+      $('#cajaKpis').innerHTML = [
+        ['Efectivo esperado en caja', money(cash.expected_cash_now)], ['Fondo inicial', money(cash.opening_amount)],
+        ['Efectivo neto', money(m.efectivo.neto)], ['Tarjeta', money(m.tarjeta.neto)], ['Transferencia', money(m.transferencia.neto)],
+        ['Ventas', `${cash.sales_count} · ${money(cash.sales_total)}`],
+      ].map(([k, v]) => `<div class="kpi"><span>${k}</span><b>${v}</b></div>`).join('');
+      $('#expected').textContent = `Efectivo esperado: ${money(cash.expected_cash_now)}`;
+    }
+    $('#cajaOps').hidden = !operar; $('#cajaMovs').hidden = !ver;
+    if (ver) {
+      const movs = await api('GET', '/cash/movements');
+      $('#cashMovTable tbody').innerHTML = movs.map((x) => `<tr><td>${time(x.created_at)}</td><td class="${x.type === 'ingreso' ? 'pos' : 'neg'}">${x.type}</td><td>${x.method}</td><td class="num">${money(x.amount)}</td><td>${esc(x.concept)}</td><td>${esc(x.user_name || '')}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Sin movimientos</td></tr>';
+    }
   }
   const sales = await api('GET', '/sales');
-  $('#salesTable tbody').innerHTML = sales.map((s) => `<tr style="${s.voided ? 'opacity:.5;text-decoration:line-through' : ''}"><td>${s.id}</td><td>${time(s.created_at)}</td>
+  $('#salesTable tbody').innerHTML = sales.map((s) => `<tr style="${s.voided ? 'opacity:.5;text-decoration:line-through' : ''}"><td>${s.id}</td><td>${time(s.created_at)}</td><td>${esc(s.seller || '')}</td>
     <td>${s.items.map((i) => `${i.qty}× ${esc(i.name)}`).join('<br>')}</td><td>${s.payments.map((p) => `${p.method} ${money(p.amount)}`).join('<br>')}</td>
-    <td class="num">${money(s.total)}</td><td><button class="link" data-reprint="${s.id}">Ticket</button>${s.voided ? 'Anulada' : cash ? `<button class="link" data-void="${s.id}">Anular</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Sin ventas hoy</td></tr>';
-  const sessions = await api('GET', '/cash/sessions');
-  $('#sessionsTable tbody').innerHTML = sessions.map((s) => {
-    const d = s.counted_cash == null ? null : s.counted_cash - s.expected_cash;
-    return `<tr><td>${s.id}</td><td>${s.opened_at.slice(0, 16)}</td><td>${s.closed_at ? s.closed_at.slice(0, 16) : 'Abierta'}</td><td class="num">${money(s.opening_amount)}</td><td class="num">${s.sales_count} · ${money(s.sales_total)}</td>
-      <td class="num">${s.closed_at ? money(s.expected_cash) : '—'}</td><td class="num">${s.closed_at ? money(s.counted_cash) : '—'}</td><td class="num ${d < 0 ? 'neg' : d > 0 ? 'pos' : ''}">${d == null ? '—' : money(d)}</td></tr>`;
-  }).join('');
+    <td class="num">${money(s.total)}</td><td><button class="link" data-reprint="${s.id}">Ticket</button>${s.voided ? 'Anulada' : cash && can('ventas.anular') ? `<button class="link" data-void="${s.id}">Anular</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">Sin ventas hoy</td></tr>';
+  $('#sessionsBox').hidden = !ver;
+  if (ver) {
+    const sessions = await api('GET', '/cash/sessions');
+    $('#sessionsTable tbody').innerHTML = sessions.map((s) => {
+      const d = s.counted_cash == null ? null : s.counted_cash - s.expected_cash;
+      return `<tr><td>${s.id}</td><td>${s.opened_at.slice(0, 16)}</td><td>${s.closed_at ? s.closed_at.slice(0, 16) : 'Abierta'}</td><td>${esc([s.opened_by_name, s.closed_by_name].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(' / '))}</td><td class="num">${money(s.opening_amount)}</td><td class="num">${s.sales_count} · ${money(s.sales_total)}</td>
+        <td class="num">${s.closed_at ? money(s.expected_cash) : '—'}</td><td class="num">${s.closed_at ? money(s.counted_cash) : '—'}</td><td class="num ${d < 0 ? 'neg' : d > 0 ? 'pos' : ''}">${d == null ? '—' : money(d)}</td></tr>`;
+    }).join('');
+  }
 }
 $('#openForm').addEventListener('submit', guard(async (e) => {
   e.preventDefault();
@@ -288,14 +306,16 @@ const GROUP_LABEL = { day: 'Ventas por día (últimos 31)', week: 'Ventas por se
 async function loadStats() {
   $('#chartTitle').textContent = GROUP_LABEL[group];
   const [series, br] = await Promise.all([api('GET', '/stats/series?group=' + group), api('GET', '/stats/breakdown?group=' + group)]);
-  const tot = series.reduce((a, r) => ({ sales: a.sales + r.sales, total: a.total + r.total, profit: a.profit + r.profit }), { sales: 0, total: 0, profit: 0 });
-  $('#statKpis').innerHTML = [[`Período actual (${br.period})`, money(br.total)], ['Ventas del período', br.sales], ['Total mostrado', money(tot.total)], ['Ganancia mostrada', money(tot.profit)]]
+  const tot = series.reduce((a, r) => ({ sales: a.sales + r.sales, total: a.total + r.total, profit: a.profit + (r.profit || 0) }), { sales: 0, total: 0, profit: 0 });
+  const showProfit = can('costos.ver');
+  $('#statKpis').innerHTML = [[`Período actual (${br.period})`, money(br.total)], ['Ventas del período', br.sales], ['Total mostrado', money(tot.total)], ...(showProfit ? [['Ganancia mostrada', money(tot.profit)]] : [])]
     .map(([k, v]) => `<div class="kpi"><span>${k}</span><b>${v}</b></div>`).join('');
   const max = Math.max(1, ...series.map((r) => r.total));
   $('#chart').innerHTML = series.map((r) => `<div class="bar" title="${esc(r.period)}: ${money(r.total)}"><small>${money(r.total).replace(/\s/g, '')}</small><i style="height:${Math.round((r.total / max) * 85)}%"></i><em>${esc(group === 'day' ? r.period.slice(5) : r.period)}</em></div>`).join('') || '<span class="muted">Todavía no hay ventas</span>';
   $('#methodTable tbody').innerHTML = br.byMethod.map((m) => `<tr><td>${esc(m.method)}</td><td class="num">${money(m.total)}</td></tr>`).join('') || '<tr><td class="muted">Sin datos</td></tr>';
   $('#topTable tbody').innerHTML = br.topArticles.map((t) => `<tr><td>${esc(t.name)}</td><td class="num">${t.units} u.</td><td class="num">${money(t.total)}</td></tr>`).join('') || '<tr><td class="muted">Sin datos</td></tr>';
-  $('#seriesTable tbody').innerHTML = [...series].reverse().map((r) => `<tr><td>${esc(r.period)}</td><td class="num">${r.sales}</td><td class="num">${r.units}</td><td class="num">${money(r.total)}</td><td class="num">${money(r.avg_ticket)}</td><td class="num">${money(r.profit)}</td></tr>`).join('');
+  $('#seriesTable tbody').innerHTML = [...series].reverse().map((r) => `<tr><td>${esc(r.period)}</td><td class="num">${r.sales}</td><td class="num">${r.units}</td><td class="num">${money(r.total)}</td><td class="num">${money(r.avg_ticket)}</td><td class="num">${r.profit == null ? '—' : money(r.profit)}</td></tr>`).join('');
+  $('#sellerTable tbody').innerHTML = br.bySeller.map((v) => `<tr><td>${esc(v.seller)}</td><td class="num">${v.sales} ventas</td><td class="num">${money(v.total)}</td></tr>`).join('') || '<tr><td class="muted">Sin datos</td></tr>';
 }
 $('#groupSeg').addEventListener('click', guard(async (e) => {
   if (!e.target.dataset.g) return;
@@ -336,6 +356,7 @@ function ticketHtml(s) {
     <div class="c b" style="font-size:15px">${esc(settings.name || 'Ticket de venta')}</div>
     ${settings.info ? `<div class="c">${esc(settings.info)}</div>` : ''}
     <div class="c">${esc((s.created_at || '').slice(0, 16).replace('T', ' '))} · Ticket #${s.id}</div>
+    ${s.seller ? `<div class="c">Atendió: ${esc(s.seller)}</div>` : ''}
     ${s.voided ? '<div class="c b">*** VENTA ANULADA ***</div>' : ''}
     <hr>
     ${s.items.map((i) => `<div>${esc(i.name)}</div>` + row(`${i.qty} x ${money(i.price)}`, money(i.qty * i.price))).join('')}
@@ -442,6 +463,119 @@ $('#testTicket').addEventListener('click', () => printTicket({
 }));
 function loadPrintTab() { renderLabels(); $('#lblScan').focus(); }
 
+// ---------- Usuarios y roles ----------
+let permCatalog = [], rolesCache = [], usersCache = [];
+async function loadUsers() {
+  [usersCache, rolesCache] = await Promise.all([api('GET', '/users'), api('GET', '/roles')]);
+  $('#userTable tbody').innerHTML = usersCache.map((u) => `<tr style="${u.active ? '' : 'opacity:.55'}"><td>${esc(u.username)}</td><td>${esc(u.name)}</td><td><span class="tag">${esc(u.role_name)}</span></td>
+    <td>${u.active ? 'Activo' : 'Inactivo'}</td><td><button class="link" data-uedit="${u.id}">Editar</button></td></tr>`).join('');
+  renderRoles();
+}
+const permChecks = (checked, disabled, prefix) => {
+  let html = '', group = '';
+  for (const p of permCatalog) {
+    if (p.group !== group) { group = p.group; html += `<div class="grp">${esc(group)}</div>`; }
+    html += `<label class="inline"><input type="checkbox" data-perm="${p.key}" ${checked.includes(p.key) ? 'checked' : ''} ${disabled ? 'disabled' : ''}> ${esc(p.label)}</label>`;
+  }
+  return `<div class="perms" id="${prefix}">${html}</div>`;
+};
+function renderRoles() {
+  $('#roleList').innerHTML = rolesCache.map((r) => `<div class="roleCard" data-role="${r.id}">
+    <div class="row"><b style="flex:1">${esc(r.name)}</b><span class="muted">${r.users} usuario${r.users === 1 ? '' : 's'} activo${r.users === 1 ? '' : 's'}</span></div>
+    ${r.is_admin ? '<div class="muted">Rol protegido: siempre tiene todos los permisos.</div>' : '<label>Nombre del rol <input data-rname value="' + esc(r.name) + '"></label>'}
+    ${permChecks(r.permissions, r.is_admin, 'rp' + r.id)}
+    ${r.is_admin ? '' : '<div class="row"><button class="primary" data-rsave>Guardar cambios</button><button class="ghost" data-rdel>Eliminar rol</button></div>'}
+  </div>`).join('') + `<div class="roleCard" id="newRoleCard" hidden><b>Nuevo rol</b>
+    <label>Nombre del rol <input id="newRoleName" placeholder="Ej: Encargado, Cajero"></label>${permChecks([], false, 'newRolePerms')}
+    <div class="row"><button class="primary" id="newRoleSave">Crear rol</button><button class="ghost" id="newRoleCancel">Cancelar</button></div></div>`;
+}
+const readPerms = (root) => $$('[data-perm]', root).filter((c) => c.checked).map((c) => c.dataset.perm);
+$('#roleNew').addEventListener('click', () => { $('#newRoleCard').hidden = false; $('#newRoleName').focus(); });
+$('#roleList').addEventListener('click', guard(async (e) => {
+  const card = e.target.closest('.roleCard');
+  if (e.target.id === 'newRoleCancel') { $('#newRoleCard').hidden = true; return; }
+  if (e.target.id === 'newRoleSave') {
+    await api('POST', '/roles', { name: $('#newRoleName').value, permissions: readPerms(card) });
+    toast('Rol creado'); return loadUsers();
+  }
+  if (!card?.dataset.role) return;
+  if (e.target.dataset.rsave !== undefined) {
+    await api('PUT', '/roles/' + card.dataset.role, { name: $('[data-rname]', card).value, permissions: readPerms(card) });
+    toast('Rol actualizado: los cambios ya rigen'); return loadUsers();
+  }
+  if (e.target.dataset.rdel !== undefined && confirm('¿Eliminar este rol?')) { await api('DELETE', '/roles/' + card.dataset.role); toast('Rol eliminado'); return loadUsers(); }
+}));
+let editingUser = null;
+function openUserDialog(u) {
+  editingUser = u || null;
+  const f = $('#userForm'); f.reset(); $('#userError').textContent = '';
+  $('#userTitle').textContent = u ? `Editar ${u.username}` : 'Nuevo usuario';
+  f.elements.role_id.innerHTML = rolesCache.map((r) => `<option value="${r.id}">${esc(r.name)}</option>`).join('');
+  f.elements.username.disabled = !!u;
+  f.elements.password.required = !u;
+  $('#userPwLabel').firstChild.textContent = u ? 'Nueva contraseña (dejá vacío para no cambiarla) ' : 'Contraseña (mínimo 8 caracteres) ';
+  $('#userActiveBox').hidden = !u;
+  if (u) { f.elements.username.value = u.username; f.elements.name.value = u.name; f.elements.role_id.value = u.role_id; f.elements.active.checked = !!u.active; }
+  $('#userDialog').showModal();
+}
+$('#userNew').addEventListener('click', () => openUserDialog());
+$('#userCancel').addEventListener('click', () => $('#userDialog').close());
+$('#userTable').addEventListener('click', (e) => { if (e.target.dataset.uedit) openUserDialog(usersCache.find((u) => u.id == e.target.dataset.uedit)); });
+$('#userForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target.elements;
+  try {
+    if (editingUser) await api('PUT', '/users/' + editingUser.id, { name: f.name.value, role_id: Number(f.role_id.value), active: f.active.checked, ...(f.password.value && { password: f.password.value }) });
+    else await api('POST', '/users', { username: f.username.value, name: f.name.value, role_id: Number(f.role_id.value), password: f.password.value });
+    $('#userDialog').close(); toast('Usuario guardado'); await loadUsers();
+  } catch (err) { $('#userError').textContent = err.message; }
+});
+
+// ---------- Sesión ----------
+function showLogin(setup = false) {
+  document.body.classList.add('locked');
+  $('#login').hidden = false; $('#loginForm').hidden = setup; $('#setupForm').hidden = !setup;
+  (setup ? $('#setupForm') : $('#loginForm')).elements.username.focus();
+}
+$('#loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target.elements; $('#loginError').textContent = '';
+  try { await api('POST', '/auth/login', { username: f.username.value, password: f.password.value }); location.reload(); }
+  catch (err) { $('#loginError').textContent = err.message; f.password.value = ''; f.password.focus(); }
+});
+$('#setupForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target.elements; $('#setupError').textContent = '';
+  if (f.password.value !== f.password2.value) { $('#setupError').textContent = 'Las contraseñas no coinciden'; return; }
+  try { await api('POST', '/auth/setup', { name: f.name.value, username: f.username.value, password: f.password.value }); location.reload(); }
+  catch (err) { $('#setupError').textContent = err.message; }
+});
+$('#logoutBtn').addEventListener('click', async () => { await api('POST', '/auth/logout', {}).catch(() => {}); location.reload(); });
+$('#pwBtn').addEventListener('click', () => { $('#pwForm').reset(); $('#pwError').textContent = ''; $('#pwDialog').showModal(); });
+$('#pwCancel').addEventListener('click', () => $('#pwDialog').close());
+$('#pwForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target.elements;
+  if (f.next.value !== f.next2.value) { $('#pwError').textContent = 'Las contraseñas nuevas no coinciden'; return; }
+  try { await api('POST', '/auth/password', { current: f.current.value, next: f.next.value }); $('#pwDialog').close(); toast('Contraseña cambiada'); }
+  catch (err) { $('#pwError').textContent = err.message; }
+});
+
 // ---------- Inicio ----------
-renderCart();
-guard(refreshCash)();
+async function boot() {
+  me = await api('GET', '/auth/me');
+  permCatalog = me.permissions;
+  if (!me.user) return showLogin(me.setupNeeded);
+  $('#login').hidden = true; document.body.classList.remove('locked');
+  $('#userName').textContent = me.user.name; $('#userRole').textContent = `(${me.user.role})`;
+  document.body.classList.toggle('nocost', !can('costos.ver'));
+  $('#adjCard').hidden = !can('stock.ajustar');
+  $('#artNew').hidden = !can('articulos.editar');
+  let first = null;
+  $$('#tabs button').forEach((b) => { const ok = canAny(...TAB_PERMS[b.dataset.tab]); b.hidden = !ok; if (ok && !first) first = b.dataset.tab; });
+  renderCart();
+  if (!first) return toast('Tu usuario no tiene permisos asignados. Pedile a un administrador que configure tu rol.', true);
+  await guard(refreshCash)();
+  showTab(first);
+}
+boot().catch((e) => toast(e.message, true));
