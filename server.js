@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { openDb, defaultDbPath, migrateLegacyDb, dataSummary, appVersion, looksTemporary } from './db.js';
+import { openDb, defaultDbPath, migrateLegacyDb, dataSummary, appVersion, looksTemporary, clearSessionsIfRequired } from './db.js';
 import { createApp } from './app.js';
 
 const port = Number(process.env.PORT) || 3000;
@@ -11,6 +11,7 @@ if (!process.env.DB_PATH) {
   if (m.migrated) console.log(`Se trasladó tu base de datos anterior:\n  de ${m.from}\n  a ${m.to}\n(la original queda como respaldo)`);
 }
 const db = openDb();
+clearSessionsIfRequired(db); // al abrir el programa hay que iniciar sesión (configurable por el administrador)
 const app = createApp(db);
 app.backups.start();
 const server = createServer(app);

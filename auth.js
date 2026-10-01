@@ -47,17 +47,28 @@ export function parseCookies(header = '') {
   return Object.fromEntries(header.split(';').map((c) => c.trim().split(/=(.*)/s)).filter((p) => p[0]).map((p) => [p[0], p[1] ?? '']));
 }
 
-// Intentos fallidos por usuario+IP: 5 errores bloquean 60 s.
-export function createLimiter({ max = 5, lockMs = 60_000 } = {}) {
+// Intentos fallidos por usuario+IP: 5 errores bloquean 60 s; si se sigue fallando el bloqueo crece
+// (60 s, 5 min, 25 min, tope 30 min), para que un PIN corto no se pueda adivinar probando.
+export function createLimiter({ max = 5, lockMs = 60_000, maxLockMs = 30 * 60_000, now = Date.now } = {}) {
   const m = new Map();
   return {
-    check(key) { const e = m.get(key); return e && e.until > Date.now() ? Math.ceil((e.until - Date.now()) / 1000) : 0; },
+    check(key) { const e = m.get(key); return e && e.until > now() ? Math.ceil((e.until - now()) / 1000) : 0; },
     fail(key) {
-      const e = m.get(key) || { n: 0, until: 0 };
-      e.n = e.until && e.until <= Date.now() ? 1 : e.n + 1;
-      if (e.n >= max) { e.until = Date.now() + lockMs; e.n = 0; }
+      const e = m.get(key) || { n: 0, until: 0, level: 0 };
+      if (e.until && e.until <= now()) { e.until = 0; e.n = 0; } // venció el bloqueo: se cuenta de nuevo (el nivel de castigo se conserva)
+      e.n++;
+      if (e.n >= max) { e.until = now() + Math.min(maxLockMs, lockMs * 5 ** e.level); e.level++; e.n = 0; }
       m.set(key, e);
     },
     ok(key) { m.delete(key); },
   };
 }
+
+// PIN de acceso rápido: 4 a 8 números. Solo vale desde la propia computadora (como el PIN de Windows).
+export const PIN_RE = /^\d{4,8}$/;
+export function isWeakPin(pin) {
+  const d = [...pin].map(Number);
+  const step = (k) => d.every((x, i) => i === 0 || x - d[i - 1] === k);
+  return step(0) || step(1) || step(-1); // 0000, 1234, 4321
+}
+export const isLoopback = (addr = '') => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(addr);

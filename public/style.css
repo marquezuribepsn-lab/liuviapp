@@ -116,3 +116,13 @@ th{color:var(--muted)}tr:hover td{background:var(--soft)}
 
 #venta>h2,#sessionsBox>h2{margin-top:24px}
 #login .verInfo{margin:0;font-size:12px;color:var(--brand-ink);opacity:.9}
+
+/* Perfil y seguridad, bloqueo */
+.profileBtn{background:none;border:0;color:var(--head-ink);font:inherit;cursor:pointer;padding:4px 8px;border-radius:8px;text-align:left}
+.profileBtn:hover{background:#ffffff40}
+dialog{max-height:92vh;overflow:auto}
+dialog.wide{width:min(640px,95vw)}
+.psec{border-top:1px solid var(--line);padding-top:12px;margin-top:14px}
+.psec h3{margin:0 0 6px;font-size:15px}
+.msg{min-height:1.3em;font-size:13px;margin:4px 0}.msg.ok{color:var(--ok)}.msg.err{color:var(--bad)}
+#unlockForm h2{margin-bottom:2px}

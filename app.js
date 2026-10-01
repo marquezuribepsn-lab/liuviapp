@@ -2,22 +2,23 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createBackups } from './backup.js';
-import { appVersion } from './db.js';
+import { appVersion, getSetting, setSetting } from './db.js';
 import {
   PERMISSIONS, ALL_PERMISSIONS, MIN_PASSWORD, SESSION_HOURS,
-  hashPassword, verifyPassword, newToken, hashToken, parseCookies, createLimiter,
+  hashPassword, verifyPassword, newToken, hashToken, parseCookies, createLimiter, PIN_RE, isWeakPin, isLoopback,
 } from './auth.js';
 
 const PUBLIC_DIR = join(fileURLToPath(new URL('.', import.meta.url)), 'public');
 const METHODS = ['efectivo', 'tarjeta', 'transferencia'];
 const COOKIE = 'liuvi_sid';
+const LOCK_OK = new Set(['/api/auth/unlock', '/api/auth/logout']); // con la sesión bloqueada solo se puede desbloquear o salir
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
 };
 
 class HttpError extends Error {
-  constructor(status, message) { super(message); this.status = status; }
+  constructor(status, message, extra = {}) { super(message); this.status = status; this.extra = extra; }
 }
 const bad = (msg) => new HttpError(400, msg);
 const round2 = (n) => Math.round(n * 100) / 100;
@@ -422,7 +423,7 @@ export function createApp(db) {
 
   // ---------- Autenticación ----------
   const limiter = createLimiter();
-  const publicUser = (u) => ({ id: u.id, username: u.username, name: u.name, role: u.role_name, permissions: u.permissions });
+  const publicUser = (u) => ({ id: u.id, username: u.username, name: u.name, role: u.role_name, hasPin: !!u.hasPin, permissions: u.permissions });
 
   function permsOf(role) {
     if (role.is_admin) return [...ALL_PERMISSIONS];
@@ -434,11 +435,23 @@ export function createApp(db) {
     const token = parseCookies(req.headers.cookie)[COOKIE];
     if (!token) return null;
     const row = db.prepare(`
-      SELECT u.id, u.username, u.name, u.active, r.name AS role_name, r.permissions, r.is_admin, s.expires_at, s.token_hash
+      SELECT u.id, u.username, u.name, u.active, u.pin_hash IS NOT NULL AS has_pin, r.name AS role_name, r.permissions, r.is_admin,
+             s.expires_at, s.token_hash, s.locked, s.last_seen, s.created_at AS started_at
       FROM user_sessions s JOIN users u ON u.id = s.user_id JOIN roles r ON r.id = u.role_id
       WHERE s.token_hash = ?`).get(hashToken(token));
     if (!row || !row.active || row.expires_at < localNow()) return null;
-    return { ...row, permissions: permsOf(row) };
+    // Bloqueo por inactividad (si el administrador lo configuró) y registro de actividad.
+    if (!row.locked) {
+      const idleMin = Number(getSetting(db, 'idle_lock_minutes', '0'));
+      const idleMs = Date.now() - new Date(String(row.last_seen || row.started_at).replace(' ', 'T')).getTime();
+      if (idleMin > 0 && idleMs > idleMin * 60_000) {
+        db.prepare('UPDATE user_sessions SET locked = 1 WHERE token_hash = ?').run(row.token_hash);
+        row.locked = 1;
+      } else if (idleMs > 20_000) {
+        db.prepare('UPDATE user_sessions SET last_seen = ? WHERE token_hash = ?').run(localNow(), row.token_hash);
+      }
+    }
+    return { ...row, locked: !!row.locked, hasPin: !!row.has_pin, permissions: permsOf(row) };
   }
   const localNow = (offsetHours = 0) => new Date(Date.now() + offsetHours * 3600_000).toLocaleString('sv-SE');
 
@@ -446,12 +459,25 @@ export function createApp(db) {
     const token = newToken();
     db.prepare('DELETE FROM user_sessions WHERE expires_at < ?').run(localNow());
     db.prepare('INSERT INTO user_sessions (token_hash, user_id, expires_at) VALUES (?,?,?)').run(hashToken(token), userId, localNow(SESSION_HOURS));
-    res.setHeader('Set-Cookie', `${COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_HOURS * 3600}`);
+    // Con «pedir inicio de sesión al abrir» (por defecto) la cookie muere al cerrar el navegador; si no, dura el tiempo de la sesión.
+    const persistent = getSetting(db, 'login_on_start', '1') === '0';
+    res.setHeader('Set-Cookie', `${COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/${persistent ? `; Max-Age=${SESSION_HOURS * 3600}` : ''}`);
   }
   const userFull = (id) => {
-    const u = db.prepare('SELECT u.id,u.username,u.name,r.name AS role_name,r.permissions,r.is_admin FROM users u JOIN roles r ON r.id=u.role_id WHERE u.id=?').get(id);
-    return publicUser({ ...u, permissions: permsOf(u) });
+    const u = db.prepare('SELECT u.id,u.username,u.name,u.pin_hash IS NOT NULL AS has_pin,r.name AS role_name,r.permissions,r.is_admin FROM users u JOIN roles r ON r.id=u.role_id WHERE u.id=?').get(id);
+    return publicUser({ ...u, hasPin: !!u.has_pin, permissions: permsOf(u) });
   };
+  const securityState = () => ({
+    loginOnStart: getSetting(db, 'login_on_start', '1') !== '0',
+    idleLockMinutes: Number(getSetting(db, 'idle_lock_minutes', '0')),
+  });
+  const waitText = (s) => (s >= 120 ? `${Math.ceil(s / 60)} minutos` : `${s} segundos`);
+  // Contraseña o PIN. El PIN solo vale desde esta misma computadora (como el de Windows).
+  function secretOk(userRow, secret, req) {
+    const pwOk = verifyPassword(secret, userRow?.password_hash);
+    const pinOk = PIN_RE.test(secret) && isLoopback(req.socket.remoteAddress) && verifyPassword(secret, userRow?.pin_hash);
+    return pwOk || pinOk;
+  }
   const checkPassword = (pw) => {
     if (typeof pw !== 'string' || pw.length < MIN_PASSWORD) throw bad(`La contraseña debe tener al menos ${MIN_PASSWORD} caracteres`);
     return pw;
@@ -472,7 +498,9 @@ export function createApp(db) {
     const setupNeeded = !db.prepare('SELECT 1 FROM users LIMIT 1').get();
     // Mientras no hay usuarios se informa dónde se busca la base (ayuda a detectar que se abrió otra copia del programa).
     const dbFile = setupNeeded ? db.prepare('PRAGMA database_list').get()?.file || undefined : undefined;
-    return { setupNeeded, version: appVersion(), dbFile, user: user ? publicUser(user) : null, permissions: PERMISSIONS };
+    // Sesión bloqueada: solo se revela el nombre para la pantalla de desbloqueo.
+    if (user?.locked) return { setupNeeded: false, version: appVersion(), user: null, locked: true, lockedName: user.name, permissions: PERMISSIONS };
+    return { setupNeeded, version: appVersion(), dbFile, user: user ? publicUser(user) : null, security: user ? securityState() : undefined, permissions: PERMISSIONS };
   });
 
   route('POST', '/api/auth/setup', 'public', ({ body, res }) => tx(db, () => {
@@ -490,11 +518,11 @@ export function createApp(db) {
     const username = String(body.username || '').trim();
     const key = `${username.toLowerCase()}|${req.socket.remoteAddress}`;
     const wait = limiter.check(key);
-    if (wait) throw new HttpError(429, `Demasiados intentos. Probá de nuevo en ${wait} segundos.`);
+    if (wait) throw new HttpError(429, `Demasiados intentos. Probá de nuevo en ${waitText(wait)}.`);
     const u = db.prepare('SELECT * FROM users WHERE username = ? AND active = 1').get(username);
-    if (!verifyPassword(String(body.password || ''), u?.password_hash)) {
+    if (!secretOk(u, String(body.password || ''), req)) {
       limiter.fail(key);
-      throw new HttpError(401, 'Usuario o contraseña incorrectos');
+      throw new HttpError(401, 'Usuario o contraseña/PIN incorrectos');
     }
     limiter.ok(key);
     startSession(res, u.id);
@@ -506,6 +534,59 @@ export function createApp(db) {
     if (token) db.prepare('DELETE FROM user_sessions WHERE token_hash = ?').run(hashToken(token));
     res.setHeader('Set-Cookie', `${COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`);
     return { ok: true };
+  });
+
+  // Pantalla de bloqueo (como la de Windows): la sesión queda abierta pero hace falta PIN o contraseña para seguir.
+  route('POST', '/api/auth/lock', null, ({ user }) => {
+    db.prepare('UPDATE user_sessions SET locked = 1 WHERE token_hash = ?').run(user.token_hash);
+    return { ok: true };
+  });
+  route('POST', '/api/auth/unlock', null, ({ body, user, req }) => {
+    if (!user.locked) return { ok: true };
+    const key = `${user.username.toLowerCase()}|${req.socket.remoteAddress}`;
+    const wait = limiter.check(key);
+    if (wait) throw new HttpError(429, `Demasiados intentos. Probá de nuevo en ${waitText(wait)}.`, { locked: true });
+    const row = db.prepare('SELECT password_hash, pin_hash FROM users WHERE id = ?').get(user.id);
+    if (!secretOk(row, String(body.secret || ''), req)) { limiter.fail(key); throw new HttpError(401, 'PIN o contraseña incorrectos', { locked: true }); }
+    limiter.ok(key);
+    db.prepare('UPDATE user_sessions SET locked = 0, last_seen = ? WHERE token_hash = ?').run(localNow(), user.token_hash);
+    return { ok: true };
+  });
+  // El navegador avisa que hay actividad aunque no se hayan hecho pedidos, para no bloquear a quien está escribiendo.
+  route('POST', '/api/auth/ping', null, () => ({ ok: true }));
+
+  // PIN de acceso rápido: se pide la contraseña actual para ponerlo, cambiarlo o quitarlo.
+  const confirmPassword = (userId, pw) => {
+    const row = db.prepare('SELECT password_hash FROM users WHERE id=?').get(userId);
+    if (!verifyPassword(String(pw || ''), row.password_hash)) throw new HttpError(403, 'La contraseña actual no es correcta');
+  };
+  route('POST', '/api/auth/pin', null, ({ body, user }) => {
+    confirmPassword(user.id, body.current);
+    const pin = String(body.pin || '');
+    if (!PIN_RE.test(pin)) throw bad('El PIN debe tener entre 4 y 8 números');
+    if (isWeakPin(pin)) throw bad('Ese PIN es muy fácil de adivinar (como 0000 o 1234). Elegí otro.');
+    db.prepare('UPDATE users SET pin_hash = ? WHERE id = ?').run(hashPassword(pin), user.id);
+    return { ok: true };
+  });
+  route('POST', '/api/auth/pin/remove', null, ({ body, user }) => {
+    confirmPassword(user.id, body.current);
+    db.prepare('UPDATE users SET pin_hash = NULL WHERE id = ?').run(user.id);
+    return { ok: true };
+  });
+
+  // Seguridad del programa (solo administradores).
+  const IDLE_OPTIONS = [0, 1, 2, 5, 10, 15, 30, 60];
+  route('GET', '/api/security', 'usuarios.admin', () => securityState());
+  route('PUT', '/api/security', 'usuarios.admin', ({ body }) => {
+    if (body.loginOnStart !== undefined) {
+      if (typeof body.loginOnStart !== 'boolean') throw bad('Valor inválido');
+      setSetting(db, 'login_on_start', body.loginOnStart ? '1' : '0');
+    }
+    if (body.idleLockMinutes !== undefined) {
+      if (!IDLE_OPTIONS.includes(Number(body.idleLockMinutes))) throw bad('Tiempo de bloqueo inválido');
+      setSetting(db, 'idle_lock_minutes', Number(body.idleLockMinutes));
+    }
+    return securityState();
   });
 
   route('POST', '/api/auth/password', null, ({ body, user, req }) => {
@@ -522,7 +603,7 @@ export function createApp(db) {
   const ADMIN = 'usuarios.admin';
 
   route('GET', '/api/users', ADMIN, () => db.prepare(`
-    SELECT u.id,u.username,u.name,u.active,u.role_id,r.name AS role_name,u.created_at FROM users u JOIN roles r ON r.id=u.role_id ORDER BY u.active DESC, u.name`).all());
+    SELECT u.id,u.username,u.name,u.active,u.role_id,u.pin_hash IS NOT NULL AS has_pin,r.name AS role_name,u.created_at FROM users u JOIN roles r ON r.id=u.role_id ORDER BY u.active DESC, u.name`).all());
 
   route('POST', '/api/users', ADMIN, ({ body }) => {
     const username = checkUsername(body.username);
@@ -553,6 +634,7 @@ export function createApp(db) {
       db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(hashPassword(checkPassword(body.password)), cur.id);
       db.prepare('DELETE FROM user_sessions WHERE user_id=?').run(cur.id);
     }
+    if (body.clear_pin) db.prepare('UPDATE users SET pin_hash = NULL WHERE id = ?').run(cur.id); // por si olvidó el PIN
     if (!active) db.prepare('DELETE FROM user_sessions WHERE user_id=?').run(cur.id);
     assertAdminRemains();
     return { ok: true };
@@ -647,6 +729,7 @@ export function createApp(db) {
           const can = (p) => !!user && user.permissions.includes(p);
           if (r.perm !== 'public') {
             if (!user) throw new HttpError(401, 'Iniciá sesión para continuar');
+            if (user.locked && !LOCK_OK.has(url.pathname)) throw new HttpError(401, 'La sesión está bloqueada', { locked: true });
             if (r.perm && ![].concat(r.perm).some(can)) throw new HttpError(403, 'No tenés permiso para hacer esto');
           }
           // Defensa extra contra CSRF: las escrituras solo se aceptan como JSON (un form de otro sitio no puede enviarlo).
@@ -665,7 +748,7 @@ export function createApp(db) {
       res.writeHead(200, { 'Content-Type': type, ...(type.startsWith('image/') && { 'Cache-Control': 'public, max-age=86400' }) });
       res.end(readFileSync(file));
     } catch (e) {
-      if (e instanceof HttpError) return send(e.status, { error: e.message });
+      if (e instanceof HttpError) return send(e.status, { error: e.message, ...e.extra });
       console.error(e);
       send(500, { error: 'Error interno' });
     }
