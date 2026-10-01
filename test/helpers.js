@@ -20,10 +20,15 @@ export async function start() {
       if (set) cookie = set.split(';')[0].endsWith('=') ? '' : set.split(';')[0];
       return { status: res.status, data: await res.json().catch(() => null), setCookie: set };
     };
-    return { call, hasCookie: () => !!cookie };
+    // Respuesta sin interpretar (descargas binarias y encabezados).
+    const raw = async (method, path) => {
+      const res = await fetch(base + path, { method, headers: cookie ? { Cookie: cookie } : {} });
+      return { status: res.status, headers: res.headers, buffer: Buffer.from(await res.arrayBuffer()) };
+    };
+    return { call, raw, hasCookie: () => !!cookie };
   };
   // Cliente con el primer administrador ya creado y la sesión iniciada.
   const admin = client();
   await admin.call('POST', '/api/auth/setup', { username: 'admin', name: 'Admin', password: 'clave-segura-1' });
-  return { db, base, client, admin: admin.call, close: () => server.close() };
+  return { db, base, client, admin: admin.call, adminRaw: admin.raw, close: () => server.close() };
 }

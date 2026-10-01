@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, cpSync, mkdirSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, cpSync, mkdirSync, existsSync, rmSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -51,7 +51,7 @@ test('migración: trae la base vieja (<programa>/data) sin tocarla y sin pisar u
 const freePort = () => new Promise((res) => { const s = createServer().listen(0, () => { const p = s.address().port; s.close(() => res(p)); }); });
 function copyProgram(dest) {
   mkdirSync(dest, { recursive: true });
-  for (const f of ['app.js', 'auth.js', 'backup.js', 'db.js', 'server.js', 'package.json']) cpSync(join(ROOT, f), join(dest, f));
+  for (const f of readdirSync(ROOT)) if (/\.js$/.test(f) || f === 'package.json') cpSync(join(ROOT, f), join(dest, f)); // todos los módulos del programa
   cpSync(join(ROOT, 'public'), join(dest, 'public'), { recursive: true });
 }
 async function runServer(programDir, env) {

@@ -134,14 +134,61 @@
     <input id="artSearch" placeholder="Buscar por nombre, código, categoría, talle, color…">
     <select id="artBrand" style="width:auto"><option value="">Todas las marcas</option></select>
     <label class="inline"><input type="checkbox" id="artLow"> Solo stock bajo</label>
+    <button id="artImport" class="ghost" title="Cargar muchos artículos de una vez desde una planilla">Importar desde Excel</button>
     <button id="artNew" class="primary">+ Nuevo artículo</button>
   </div>
   <table id="artTable"><thead><tr><th>Código</th><th>Marca</th><th>Artículo</th><th>Categoría</th><th>Talle</th><th>Color</th><th>Precio</th><th class="col-cost">Costo</th><th>Stock</th><th></th></tr></thead><tbody></tbody></table>
+  <p class="muted" id="artNote" style="margin:8px 2px"></p>
   <div class="card" id="brandsCard" style="margin-top:16px">
     <h2>Marcas</h2>
     <table id="brandsTable"><thead><tr><th>Marca</th><th>Artículos</th><th></th></tr></thead><tbody></tbody></table>
     <form id="brandForm" class="row"><input id="brandNew" placeholder="Nueva marca" maxlength="40"><button class="primary">Agregar</button></form>
   </div>
+  <dialog id="importDialog" class="wide">
+    <h2>Importar artículos desde Excel</h2>
+
+    <div id="impStep1">
+      <p class="muted">Cargá todos tus artículos de una vez, en lugar de uno por uno. Sirve, por ejemplo, para instalar el programa en otra computadora o para cargar mercadería nueva.</p>
+      <ol class="muted" style="margin:0 0 10px;padding-left:20px">
+        <li>Bajá la <a href="/api/import/template" download>planilla modelo</a> (o usá la tuya: solo hacen falta las columnas «Artículo» y «Precio»).</li>
+        <li>Completala en Excel y guardala.</li>
+        <li>Elegí el archivo acá abajo. Antes de cargar nada vas a ver un resumen.</li>
+      </ol>
+      <label>Archivo (.xlsx o .csv) <input type="file" id="impFile" accept=".xlsx,.csv,.txt"></label>
+      <div class="msg" id="impError"></div>
+      <div class="row end"><button type="button" class="ghost" id="impCancel1">Cancelar</button><button type="button" class="primary" id="impAnalyze" disabled>Analizar planilla</button></div>
+    </div>
+
+    <div id="impStep2" hidden>
+      <div class="kpis" id="impKpis" style="margin-bottom:8px"></div>
+      <p class="muted" id="impInfo"></p>
+      <details id="impErrBox" hidden><summary class="neg" id="impErrSummary" style="cursor:pointer"></summary>
+        <div style="max-height:200px;overflow:auto;margin-top:6px"><table id="impErrTable"><thead><tr><th>Fila</th><th>Problema</th></tr></thead><tbody></tbody></table></div>
+        <p class="muted" id="impErrMore" style="margin:6px 0 0"></p>
+      </details>
+      <div id="impOptions">
+        <label id="impModeBox">Si el artículo ya existe (mismo código de barras)
+          <select id="impMode">
+            <option value="skip">Dejarlo como está (omitir)</option>
+            <option value="replace">Actualizar sus datos y dejar el stock de la planilla</option>
+            <option value="add">Actualizar sus datos y sumar el stock de la planilla</option>
+          </select>
+        </label>
+        <label class="inline"><input type="checkbox" id="impGen" checked> Crear un código de barras para los artículos que no lo tengan</label>
+      </div>
+      <div class="row end"><button type="button" class="ghost" id="impBack">Elegir otro archivo</button><button type="button" class="primary" id="impStart">Cargar</button></div>
+    </div>
+
+    <div id="impStep3" hidden>
+      <h3 id="impTitle" style="font-size:17px;margin:4px 0 10px">Cargando artículos…</h3>
+      <div class="progress"><div id="impBar"></div></div>
+      <p id="impCount" style="margin:8px 0 2px;font-weight:600"></p>
+      <div class="kpis" id="impDone" style="margin:10px 0"></div>
+      <p id="impMsg" style="margin:4px 0"></p>
+      <div class="row end"><button type="button" class="primary" id="impClose" disabled>Cerrar</button></div>
+    </div>
+  </dialog>
+
   <dialog id="artDialog">
     <form id="artForm" method="dialog">
       <h2 id="artTitle">Artículo</h2>

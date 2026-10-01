@@ -126,3 +126,11 @@ dialog.wide{width:min(640px,95vw)}
 .psec h3{margin:0 0 6px;font-size:15px}
 .msg{min-height:1.3em;font-size:13px;margin:4px 0}.msg.ok{color:var(--ok)}.msg.err{color:var(--bad)}
 #unlockForm h2{margin-bottom:2px}
+
+/* Importar desde Excel */
+.progress{height:16px;border-radius:99px;background:var(--line);overflow:hidden}
+.progress>div{height:100%;width:0;background:var(--accent);border-radius:99px;transition:width .25s ease}
+#impKpis .kpi b,#impDone .kpi b{font-size:20px}
+#impErrTable td{font-size:13px}
+
+button:disabled{opacity:.45;cursor:not-allowed;filter:none!important}
