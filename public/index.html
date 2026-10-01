@@ -75,7 +75,11 @@
       <h2>Venta actual</h2>
       <table id="cart"><thead><tr><th>Artículo</th><th>Cant.</th><th>Precio</th><th>Subtotal</th><th></th></tr></thead><tbody></tbody></table>
       <div class="totals">
-        <label class="inline"><input type="checkbox" id="autoTicket"> Imprimir ticket al cobrar</label>
+        <label class="inline"><input type="checkbox" id="autoTicket"> Imprimir comprobante al cobrar</label>
+        <div class="row">
+          <label>Cliente (opcional) <input id="custName" maxlength="120" placeholder="Nombre y apellido"></label>
+          <label>DNI / CUIT <input id="custDoc" maxlength="30" inputmode="numeric"></label>
+        </div>
         <label>Descuento % <input id="discount" type="number" min="0" max="100" value="0"></label>
         <div>Subtotal: <b id="subtotal">$0</b></div>
         <div class="big">Total: <b id="total">$0</b></div>
@@ -95,7 +99,7 @@
       <div class="row">
         <button id="charge" class="primary">Cobrar</button>
         <button id="clearCart" class="ghost">Vaciar</button>
-        <button id="lastTicket" class="ghost">Último ticket</button>
+        <button id="lastTicket" class="ghost">Reimprimir último</button>
       </div>
     </div>
   </div>
@@ -123,8 +127,8 @@
       <div class="card" id="cajaMovs"><h2>Movimientos de la caja</h2><table id="cashMovTable"><thead><tr><th>Hora</th><th>Tipo</th><th>Medio</th><th>Monto</th><th>Concepto</th><th>Usuario</th></tr></thead><tbody></tbody></table></div>
     </div>
   </div>
-  <h2>Ventas de hoy</h2>
-  <table id="salesTable"><thead><tr><th>#</th><th>Hora</th><th>Vendedor</th><th>Detalle</th><th>Pago</th><th>Total</th><th></th></tr></thead><tbody></tbody></table>
+  <h2>Ventas del día <input id="salesDate" type="date" style="width:auto;margin-left:10px;font-size:14px"></h2>
+  <table id="salesTable"><thead><tr><th>N°</th><th>Hora</th><th>Vendedor</th><th>Detalle</th><th>Pago</th><th>Total</th><th></th></tr></thead><tbody></tbody></table>
   <div id="sessionsBox"><h2>Historial de cajas</h2>
   <table id="sessionsTable"><thead><tr><th>#</th><th>Apertura</th><th>Cierre</th><th>Responsable</th><th>Inicial</th><th>Ventas</th><th>Esperado</th><th>Contado</th><th>Diferencia</th></tr></thead><tbody></tbody></table></div>
 </section>
@@ -316,18 +320,28 @@
       </div>
     </div>
     <div class="card">
-      <h2>Ajustes de ticket</h2>
-      <label>Nombre del local <input id="setName" placeholder="Mi local"></label>
-      <label>Datos adicionales (dirección, teléfono, CUIT…) <input id="setInfo"></label>
+      <h2>Ajustes de comprobante</h2>
+      <label>Nombre / razón social <input id="setName" placeholder="Mi local"></label>
+      <label>Dirección y teléfono <input id="setInfo"></label>
+      <div class="row">
+        <label>CUIT <input id="setCuit" inputmode="numeric" placeholder="20-12345678-9"></label>
+        <label>Condición frente al IVA
+          <select id="setIva"><option value="">— no mostrar —</option><option>Monotributo</option><option>Responsable Inscripto</option><option>IVA Exento</option></select>
+        </label>
+        <label>Punto de venta <input id="setPv" type="number" min="1" max="99999" style="width:90px"></label>
+      </div>
+      <label>Copias a imprimir
+        <select id="setCopies"><option value="both">Dos: original (cliente) y duplicado (para mí)</option><option value="client">Solo la del cliente</option><option value="shop">Solo la mía</option></select>
+      </label>
       <label>Impresora de tickets
-        <select id="setPaper"><option value="a4">Impresora común (hoja)</option><option value="80">Térmica 80 mm</option><option value="58">Térmica 58 mm</option></select>
+        <select id="setPaper"><option value="a4">Impresora común (comprobante en hoja)</option><option value="80">Térmica 80 mm</option><option value="58">Térmica 58 mm</option></select>
       </label>
       <label>Tamaño de hoja
         <select id="setPage"><option value="A4">A4</option><option value="letter">Carta</option></select>
       </label>
-      <label>Pie del ticket <input id="setFooter" placeholder="¡Gracias por su compra!"></label>
+      <label>Pie del comprobante <input id="setFooter" placeholder="¡Gracias por su compra!"></label>
       <p class="muted">Se imprime con el cuadro de impresión del navegador: elegí tu impresora, dejá la escala en 100 % («Tamaño real», no «Ajustar a la página») y desactivá «Encabezados y pie de página». Estos ajustes se guardan en este navegador.</p>
-      <button id="testTicket" class="ghost">Imprimir ticket de prueba</button>
+      <button id="testTicket" class="ghost">Imprimir comprobante de prueba</button>
     </div>
   </div>
 </section>

@@ -106,7 +106,7 @@ $$('[data-full]').forEach((b) => b.addEventListener('click', () => {
   updateChange();
 }));
 function resetSale() {
-  cart = []; $('#discount').value = 0;
+  cart = []; $('#discount').value = 0; $('#custName').value = ''; $('#custDoc').value = '';
   ['Efectivo', 'Tarjeta', 'Transferencia'].forEach((m) => ($('#pay' + m).value = ''));
   renderCart(); $('#results').innerHTML = ''; $('#scan').value = ''; $('#scan').focus();
 }
@@ -141,7 +141,7 @@ $('#charge').addEventListener('click', guard(async () => {
   const payments = paymentsEntered();
   const { total } = cartTotals();
   if (!payments.length) payments.push({ method: 'efectivo', amount: total }); // por defecto: efectivo exacto
-  const sale = await api('POST', '/sales', { items: cart.map((l) => ({ article_id: l.a.id, qty: l.qty })), discount_pct: Number($('#discount').value) || 0, payments });
+  const sale = await api('POST', '/sales', { items: cart.map((l) => ({ article_id: l.a.id, qty: l.qty })), discount_pct: Number($('#discount').value) || 0, payments, customer_name: $('#custName').value, customer_doc: $('#custDoc').value });
   toast(`Venta #${sale.id} registrada${sale.change ? ` · Vuelto ${money(sale.change)}` : ''}`);
   resetSale(); await loadCash();
   const full = (await api('GET', '/sales')).find((x) => x.id === sale.id);
@@ -453,10 +453,11 @@ async function loadCash() {
       $('#cashMovTable tbody').innerHTML = movs.map((x) => `<tr><td>${time(x.created_at)}</td><td class="${x.type === 'ingreso' ? 'pos' : 'neg'}">${x.type}</td><td>${x.method}</td><td class="num">${money(x.amount)}</td><td>${esc(x.concept)}</td><td>${esc(x.user_name || '')}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Sin movimientos</td></tr>';
     }
   }
-  const sales = await api('GET', '/sales');
-  $('#salesTable tbody').innerHTML = sales.map((s) => `<tr style="${s.voided ? 'opacity:.5;text-decoration:line-through' : ''}"><td>${s.id}</td><td>${time(s.created_at)}</td><td>${esc(s.seller || '')}</td>
+  const day = $('#salesDate').value || today();
+  const sales = await api('GET', '/sales?date=' + day);
+  $('#salesTable tbody').innerHTML = sales.map((s) => `<tr style="${s.voided ? 'opacity:.5;text-decoration:line-through' : ''}"><td>${compNumber(s)}</td><td>${time(s.created_at)}</td><td>${esc(s.seller || '')}${s.customer_name ? `<br><small class="muted">Cliente: ${esc(s.customer_name)}</small>` : ''}</td>
     <td>${s.items.map((i) => `${i.qty}× ${esc(i.name)}`).join('<br>')}</td><td>${s.payments.map((p) => `${p.method} ${money(p.amount)}`).join('<br>')}</td>
-    <td class="num">${money(s.total)}</td><td><button class="link" data-reprint="${s.id}">Ticket</button>${s.voided ? 'Anulada' : cash && can('ventas.anular') ? `<button class="link" data-void="${s.id}">Anular</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">Sin ventas hoy</td></tr>';
+    <td class="num">${money(s.total)}</td><td><button class="link" data-reprint="${s.id}">Imprimir</button>${s.voided ? 'Anulada' : cash && day === today() && can('ventas.anular') ? `<button class="link" data-void="${s.id}">Anular</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">Sin ventas en esta fecha</td></tr>';
   $('#sessionsBox').hidden = !ver;
   if (ver) {
     const sessions = await api('GET', '/cash/sessions');
@@ -489,7 +490,7 @@ $('#closeForm').addEventListener('submit', guard(async (e) => {
 }));
 $('#salesTable').addEventListener('click', guard(async (e) => {
   if (e.target.dataset.reprint) {
-    const s = (await api('GET', '/sales')).find((x) => x.id == e.target.dataset.reprint);
+    const s = (await api('GET', '/sales?date=' + ($('#salesDate').value || today()))).find((x) => x.id == e.target.dataset.reprint);
     if (s) printTicket(s);
     return;
   }
@@ -524,10 +525,13 @@ $('#groupSeg').addEventListener('click', guard(async (e) => {
 }));
 
 // ---------- Impresión ----------
+const today = () => new Date().toLocaleDateString('sv-SE');
+$('#salesDate').value = today();
+$('#salesDate').addEventListener('change', guard(() => loadCash()));
 const SETTINGS_KEY = 'liuvi.print';
 new Image().src = '/img/logo-tinta.png'; // precarga para el ticket
 const settings = (() => {
-  const d = { name: '', info: '', paper: 'a4', pageSize: 'A4', footer: '¡Gracias por su compra!', auto: false, lblFormat: 'sheet', lblPreset: '60x35', lblW: 60, lblH: 35, lblMargin: 8, lblSkip: 0 };
+  const d = { name: '', info: '', cuit: '', iva: '', pv: 1, copies: 'both', paper: 'a4', pageSize: 'A4', footer: '¡Gracias por su compra!', auto: false, lblFormat: 'sheet', lblPreset: '60x35', lblW: 60, lblH: 35, lblMargin: 8, lblSkip: 0 };
   try { return { ...d, ...JSON.parse(localStorage.getItem(SETTINGS_KEY)) }; } catch { return d; }
 })();
 const saveSettings = () => { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch { /* sin almacenamiento */ } };
@@ -547,18 +551,26 @@ async function printHtml(html, pageCss) {
   window.print();
 }
 
-function ticketHtml(s) {
+const COPIES = { client: ['ORIGINAL · Cliente'], shop: ['DUPLICADO · Comercio'], both: ['ORIGINAL · Cliente', 'DUPLICADO · Comercio'] };
+const compNumber = (s) => `${String(settings.pv || 1).padStart(4, '0')}-${String(s.id).padStart(8, '0')}`;
+const methodName = (m) => m[0].toUpperCase() + m.slice(1);
+const when = (s) => (s.created_at || '').slice(0, 16).replace('T', ' ');
+
+// Ticket para impresora térmica (58/80 mm).
+function ticketHtml(s, copy) {
   const w = { 58: '48mm', 80: '72mm' }[settings.paper] || '80mm';
   const row = (a, b, cls = '') => `<div class="r ${cls}"><span>${a}</span><span>${b}</span></div>`;
   const pays = s.payments.map((p) => (p.method === 'efectivo' && s.change
     ? row('Efectivo recibido', money(p.amount + s.change)) + row('Vuelto', money(s.change))
-    : row(p.method[0].toUpperCase() + p.method.slice(1), money(p.amount)))).join('');
+    : row(methodName(p.method), money(p.amount)))).join('');
   return `<div class="ticket" style="width:${w}">
     <img class="logo" src="/img/logo-tinta.png" alt="Liu Vi" style="width:${w === '48mm' ? '30mm' : '40mm'}">
     ${settings.name ? `<div class="c b" style="font-size:14px">${esc(settings.name)}</div>` : ''}
     ${settings.info ? `<div class="c">${esc(settings.info)}</div>` : ''}
-    <div class="c">${esc((s.created_at || '').slice(0, 16).replace('T', ' '))} · Ticket #${s.id}</div>
+    ${settings.cuit ? `<div class="c">CUIT ${esc(settings.cuit)}${settings.iva ? ' · ' + esc(settings.iva) : ''}</div>` : ''}
+    <div class="c">${esc(when(s))} · N° ${compNumber(s)}</div>
     ${s.seller ? `<div class="c">Atendió: ${esc(s.seller)}</div>` : ''}
+    ${s.customer_name || s.customer_doc ? `<div class="c">Cliente: ${esc([s.customer_name, s.customer_doc].filter(Boolean).join(' · '))}</div>` : ''}
     ${s.voided ? '<div class="c b">*** VENTA ANULADA ***</div>' : ''}
     <hr>
     ${s.items.map((i) => `<div>${esc(i.name)}</div>` + row(`${i.qty} x ${money(i.price)}`, money(i.qty * i.price))).join('')}
@@ -567,14 +579,60 @@ function ticketHtml(s) {
     ${row('TOTAL', money(s.total), 'tot')}
     <hr>${pays}
     <hr><div class="c">${esc(settings.footer)}</div>
-    <div class="c" style="font-size:10px">Documento no válido como factura</div>
+    <div class="c" style="font-size:10px">Comprobante no válido como factura</div>
+    ${copy ? `<div class="c b" style="font-size:10px">${copy}</div>` : ''}
+  </div>`;
+}
+
+// Comprobante para hoja A4/Carta. Una copia = una mitad; con pocos artículos entran las dos en la misma hoja.
+function comprobanteHtml(s, copy) {
+  const pay = s.payments.map((p) => `${methodName(p.method)} ${money(p.amount + (p.method === 'efectivo' ? s.change || 0 : 0))}`).join(' · ');
+  return `<div class="comp">
+    ${s.voided ? '<div class="stamp">ANULADA</div>' : ''}
+    <div class="ch">
+      <div class="cl">
+        <img src="/img/logo-tinta.png" alt="Liu Vi" style="width:38mm;height:auto">
+        ${settings.name ? `<b>${esc(settings.name)}</b>` : ''}
+        ${settings.info ? `<div>${esc(settings.info)}</div>` : ''}
+        ${settings.cuit ? `<div>CUIT: ${esc(settings.cuit)}</div>` : ''}
+        ${settings.iva ? `<div>Condición IVA: ${esc(settings.iva)}</div>` : ''}
+      </div>
+      <div class="cx"><b>X</b><small>Documento no válido como factura</small></div>
+      <div class="cr">
+        <b>COMPROBANTE</b>
+        <div>N° ${compNumber(s)}</div>
+        <div>Fecha: ${esc(when(s))}</div>
+        ${s.seller ? `<div>Atendió: ${esc(s.seller)}</div>` : ''}
+        <div class="copy">${copy}</div>
+      </div>
+    </div>
+    <div class="cc"><span>Cliente: <b>${esc(s.customer_name || 'Consumidor final')}</b></span>${s.customer_doc ? `<span>DNI/CUIT: <b>${esc(s.customer_doc)}</b></span>` : ''}</div>
+    <table><thead><tr><th>Descripción</th><th>Cant.</th><th>Precio unit.</th><th>Subtotal</th></tr></thead><tbody>
+      ${s.items.map((i) => `<tr><td>${esc(i.name)}</td><td class="n">${i.qty}</td><td class="n">${money(i.price)}</td><td class="n">${money(i.qty * i.price)}</td></tr>`).join('')}
+    </tbody></table>
+    <div class="ct">
+      ${s.discount ? `<div>Subtotal: ${money(s.subtotal)}</div><div>Descuento: -${money(s.discount)}</div>` : ''}
+      <div class="tot">TOTAL: ${money(s.total)}</div>
+      <div class="cpay">Pago: ${esc(pay)}${s.change ? ` · Vuelto: ${money(s.change)}` : ''}</div>
+    </div>
+    <div class="cf">${esc(settings.footer)}</div>
   </div>`;
 }
 const pageName = () => (settings.pageSize === 'letter' ? 'letter' : 'A4');
 const PAGE_MM = () => (settings.pageSize === 'letter' ? [215.9, 279.4] : [210, 297]);
-// Térmica: página del ancho del rollo y largo automático. Común: hoja completa con el ticket arriba.
-const printTicket = (s) => printHtml(ticketHtml(s), { 58: 'size:58mm auto;margin:3mm', 80: 'size:80mm auto;margin:3mm' }[settings.paper] || `size:${pageName()} portrait;margin:10mm`);
-$('#lastTicket').addEventListener('click', () => (lastTicket ? printTicket(lastTicket) : toast('Todavía no hay un ticket para reimprimir', true)));
+// Térmica: un ticket por copia, cada uno en su tramo de rollo. Común: hoja con el comprobante
+// (las dos copias juntas si entran, separadas por una línea de corte; si no, una por hoja).
+function printTicket(s) {
+  const copies = COPIES[settings.copies] || COPIES.both;
+  if (settings.paper === '58' || settings.paper === '80') {
+    const html = copies.map((c, i) => `<div${i ? ' class="pb"' : ''}>${ticketHtml(s, c)}</div>`).join('');
+    return printHtml(html, `size:${settings.paper}mm auto;margin:3mm`);
+  }
+  const together = s.items.length <= 10;
+  const html = copies.map((c, i) => `${i ? (together ? '<div class="cut">✂ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -</div>' : '') : ''}<div class="${i && !together ? 'pb' : ''}">${comprobanteHtml(s, c)}</div>`).join('');
+  return printHtml(html, `size:${pageName()} portrait;margin:10mm`);
+}
+$('#lastTicket').addEventListener('click', () => (lastTicket ? printTicket(lastTicket) : toast('Todavía no hay un comprobante para reimprimir', true)));
 $('#autoTicket').checked = settings.auto;
 $('#autoTicket').addEventListener('change', (e) => { settings.auto = e.target.checked; saveSettings(); });
 
@@ -651,7 +709,7 @@ $('#lblPrint').addEventListener('click', guard(async () => {
 
 // Ajustes
 const bindSetting = (id, key) => { const el = $('#' + id); el.value = settings[key]; el.addEventListener('input', () => { settings[key] = el.value; saveSettings(); }); };
-bindSetting('setName', 'name'); bindSetting('setInfo', 'info'); bindSetting('setPaper', 'paper'); bindSetting('setFooter', 'footer'); bindSetting('setPage', 'pageSize');
+bindSetting('setName', 'name'); bindSetting('setInfo', 'info'); bindSetting('setCuit', 'cuit'); bindSetting('setIva', 'iva'); bindSetting('setPv', 'pv'); bindSetting('setCopies', 'copies'); bindSetting('setPaper', 'paper'); bindSetting('setFooter', 'footer'); bindSetting('setPage', 'pageSize');
 for (const [id, key] of [['lblFormat', 'lblFormat'], ['lblPreset', 'lblPreset'], ['lblW', 'lblW'], ['lblH', 'lblH'], ['lblMargin', 'lblMargin'], ['lblSkip', 'lblSkip']]) bindSetting(id, key);
 ['lblFormat', 'lblPreset', 'lblW', 'lblH', 'lblMargin', 'lblSkip', 'setPage'].forEach((id) => $('#' + id).addEventListener('input', updateFit));
 // Editar medidas a mano pasa el preset a "Personalizado".
@@ -659,7 +717,7 @@ for (const [id, key] of [['lblFormat', 'lblFormat'], ['lblPreset', 'lblPreset'],
 $('#lblPreset').addEventListener('change', () => { settings.lblPreset = $('#lblPreset').value; saveSettings(); });
 updateFit();
 $('#testTicket').addEventListener('click', () => printTicket({
-  id: 0, created_at: new Date().toLocaleString('sv-SE'), subtotal: 30000, discount: 3000, total: 27000, change: 3000,
+  id: 1, created_at: new Date().toLocaleString('sv-SE'), seller: 'Vendedor', customer_name: 'Cliente de prueba', customer_doc: '20-12345678-9', subtotal: 30000, discount: 3000, total: 27000, change: 3000,
   items: [{ name: 'Remera lisa · M · Negro', qty: 2, price: 10000 }, { name: 'Gorra · U', qty: 1, price: 10000 }],
   payments: [{ method: 'efectivo', amount: 27000 }],
 }));
