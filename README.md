@@ -23,6 +23,15 @@ npm start        # http://localhost:3000   (PORT=8080 npm start para cambiar el 
 npm test
 ```
 
+## Si el sistema pide crear el administrador otra vez
+
+Significa que está buscando los datos en un lugar donde no hay ninguno. Para saber dónde busca:
+
+- La **ventana negra** de `iniciar.bat` / `iniciar.command` muestra, al iniciar, tres líneas: la versión (`Liu Vi v1.1.0`), `Base de datos: <ruta>` y `Datos guardados: N usuario(s), N artículo(s), N venta(s)` (o «ninguno todavía» si la base es nueva).
+- La **pantalla de primer uso** muestra la misma ruta y la versión. Si no aparece la versión, se está usando una versión vieja: bajá el ZIP de `main` otra vez.
+- Si el programa está dentro de un ZIP sin extraer o en una carpeta temporal, la ventana negra avisa: extraé el ZIP completo en una carpeta fija (por ejemplo Documentos).
+- Para recuperar datos de una instalación vieja: `npm run restore -- "ruta\a\la\carpeta\vieja\data\liuvi.db"`.
+
 ## Identidad visual
 
 La interfaz usa el logo y la paleta de Liu Vi: verde agua `#37c2b9` (el del logo) y blanco, con tonos más oscuros del mismo verde para botones y textos (contraste mínimo 4,5:1) y modo oscuro automático. Los archivos del logo están en `public/img/`: `logo-blanco.png` (encabezado y acceso), `logo-tinta.png` (ticket, para imprimir sobre papel blanco), `favicon.png` y el original en `logo-original.png`. Los colores se cambian en un solo lugar: las variables al principio de `public/style.css`.

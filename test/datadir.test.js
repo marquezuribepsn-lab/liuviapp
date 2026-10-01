@@ -75,12 +75,15 @@ test('E2E: el usuario sobrevive a un corte brusco y a abrir el programa desde OT
   try {
     const a = await runServer(p1, env);
     assert.equal(await a.me(), true, 'primera vez: pide crear el administrador');
+    assert.match(a.out(), /Datos guardados: ninguno todavía/);
     const setup = await fetch(a.base + '/api/auth/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'marina', name: 'Marina', password: 'clave-segura-1' }) });
     assert.equal(setup.status, 201);
     await a.kill('SIGKILL'); // como cerrar la ventana negra de golpe
 
     const b = await runServer(p1, env);
     assert.equal(await b.me(), false, 'misma carpeta, tras corte brusco: el usuario sigue');
+    assert.match(b.out(), /Datos guardados: 1 usuario\(s\)/, 'la ventana muestra que encontró los datos');
+    assert.match(b.out(), /Liu Vi v\d+\.\d+\.\d+/);
     await b.kill();
 
     const c = await runServer(p2, env); // ZIP nuevo extraído en otra carpeta
@@ -115,4 +118,36 @@ test('Copias muestra dónde está la base', async () => {
     const st = (await t.admin('GET', '/api/backup')).data;
     assert.ok('db_file' in st);
   } finally { t.close(); }
+});
+
+test('detecta un programa en carpeta temporal o dentro de un ZIP', async () => {
+  const { looksTemporary } = await import('../db.js');
+  const tmpWin = 'C:\\Users\\Ana\\AppData\\Local\\Temp';
+  assert.equal(looksTemporary('C:\\Users\\Ana\\AppData\\Local\\Temp\\Temp1_liuviapp-main.zip\\liuviapp-main', tmpWin), true);
+  assert.equal(looksTemporary('C:\\Users\\Ana\\AppData\\Local\\Temp\\algo\\liuviapp', tmpWin), true);
+  assert.equal(looksTemporary('C:\\Users\\Ana\\Downloads\\liuviapp-main.zip\\liuviapp-main', 'C:\\x'), true);
+  assert.equal(looksTemporary('/tmp/xyz/liuviapp', '/tmp'), true);
+  assert.equal(looksTemporary('C:\\Users\\Ana\\Documents\\liuviapp-main', tmpWin), false);
+  assert.equal(looksTemporary('/home/ana/liuviapp', '/tmp'), false);
+});
+
+test('/api/auth/me informa la versión y, sin usuarios, dónde busca la base', async () => {
+  const { createServer } = await import('node:http');
+  const { createApp } = await import('../app.js');
+  const { appVersion } = await import('../db.js');
+  const dir = tmp(), file = join(dir, 'liuvi.db');
+  const server = createServer(createApp(openDb(file)));
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const vacio = await (await fetch(base + '/api/auth/me')).json();
+    assert.equal(vacio.version, appVersion());
+    assert.match(vacio.version, /^\d+\.\d+\.\d+$/);
+    assert.equal(vacio.setupNeeded, true);
+    assert.equal(vacio.dbFile, file, 'sin usuarios dice dónde busca');
+    await fetch(base + '/api/auth/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'marina', password: 'clave-segura-1' }) });
+    const conUsuario = await (await fetch(base + '/api/auth/me')).json();
+    assert.equal(conUsuario.setupNeeded, false);
+    assert.equal(conUsuario.dbFile, undefined, 'con usuarios no se expone la ruta');
+  } finally { server.close(); rmSync(dir, { recursive: true, force: true }); }
 });

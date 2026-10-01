@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { openDb, defaultDbPath, migrateLegacyDb } from './db.js';
+import { openDb, defaultDbPath, migrateLegacyDb, dataSummary, appVersion, looksTemporary } from './db.js';
 import { createApp } from './app.js';
 
 const port = Number(process.env.PORT) || 3000;
@@ -10,7 +10,8 @@ if (!process.env.DB_PATH) {
   const m = migrateLegacyDb();
   if (m.migrated) console.log(`Se trasladó tu base de datos anterior:\n  de ${m.from}\n  a ${m.to}\n(la original queda como respaldo)`);
 }
-const app = createApp(openDb());
+const db = openDb();
+const app = createApp(db);
 app.backups.start();
 const server = createServer(app);
 server.on('error', (e) => {
@@ -19,7 +20,12 @@ server.on('error', (e) => {
   process.exit(1);
 });
 server.listen(port, host, () => {
-  console.log(`Liuvi listo en http://localhost:${port}`);
+  const s = dataSummary(db);
+  console.log(`Liu Vi v${appVersion()} listo en http://localhost:${port}`);
   console.log(`Base de datos: ${defaultDbPath()}`);
+  console.log(s.users + s.articles + s.sales === 0
+    ? 'Datos guardados: ninguno todavía (base nueva)'
+    : `Datos guardados: ${s.users} usuario(s), ${s.articles} artículo(s), ${s.sales} venta(s)`);
+  if (looksTemporary()) console.log('\nATENCIÓN: el programa está en una carpeta temporal o dentro de un ZIP.\nExtraé el ZIP completo (clic derecho > Extraer todo) en una carpeta fija, por ejemplo Documentos, y abrí iniciar.bat desde ahí.');
   if (host !== '127.0.0.1' && host !== 'localhost') console.log(`Atención: accesible desde la red (${host}).`);
 });
