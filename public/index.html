@@ -89,14 +89,22 @@
 <section id="articulos" class="tab" hidden>
   <div class="row">
     <input id="artSearch" placeholder="Buscar por nombre, código, categoría, talle, color…">
+    <select id="artBrand" style="width:auto"><option value="">Todas las marcas</option></select>
     <label class="inline"><input type="checkbox" id="artLow"> Solo stock bajo</label>
     <button id="artNew" class="primary">+ Nuevo artículo</button>
   </div>
-  <table id="artTable"><thead><tr><th>Código</th><th>Artículo</th><th>Categoría</th><th>Talle</th><th>Color</th><th>Precio</th><th class="col-cost">Costo</th><th>Stock</th><th></th></tr></thead><tbody></tbody></table>
+  <table id="artTable"><thead><tr><th>Código</th><th>Marca</th><th>Artículo</th><th>Categoría</th><th>Talle</th><th>Color</th><th>Precio</th><th class="col-cost">Costo</th><th>Stock</th><th></th></tr></thead><tbody></tbody></table>
+  <div class="card" id="brandsCard" style="margin-top:16px">
+    <h2>Marcas</h2>
+    <table id="brandsTable"><thead><tr><th>Marca</th><th>Artículos</th><th></th></tr></thead><tbody></tbody></table>
+    <form id="brandForm" class="row"><input id="brandNew" placeholder="Nueva marca" maxlength="40"><button class="primary">Agregar</button></form>
+  </div>
   <dialog id="artDialog">
     <form id="artForm" method="dialog">
       <h2 id="artTitle">Artículo</h2>
       <label>Código de barras <span class="row"><input name="barcode" placeholder="Escaneá o escribí"><button type="button" id="genCode" class="ghost">Generar</button></span></label>
+      <label>Marca <input name="brand" list="brandList" autocomplete="off" placeholder="Koxis, Adicta, Inversa…"></label>
+      <datalist id="brandList"></datalist>
       <label>Nombre <input name="name" required></label>
       <div class="grid2">
         <label>Categoría <input name="category" list="cats"></label>
@@ -234,6 +242,7 @@
     <div class="card"><h2>Medios de pago (período actual)</h2><table id="methodTable"><tbody></tbody></table></div>
     <div class="card"><h2>Más vendidos (período actual)</h2><table id="topTable"><tbody></tbody></table></div>
   </div>
+  <div class="card"><h2>Ventas por marca (período actual)</h2><table id="brandStatsTable"><tbody></tbody></table><p class="muted" style="margin:8px 0 0">Importes a precio de lista, antes de descuentos.</p></div>
   <div class="card"><h2>Ventas por vendedor (período actual)</h2><table id="sellerTable"><tbody></tbody></table></div>
   <table id="seriesTable"><thead><tr><th>Período</th><th>Ventas</th><th>Unidades</th><th>Total</th><th>Ticket prom.</th><th>Ganancia</th></tr></thead><tbody></tbody></table>
 </section>

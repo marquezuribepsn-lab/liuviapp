@@ -22,7 +22,7 @@ const can = (p) => !!me?.user?.permissions.includes(p);
 const canAny = (...ps) => ps.some(can);
 const guard = (fn) => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message, true); } };
 const debounce = (fn, ms = 250) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
-const articleLabel = (a) => [a.name, a.size && `Talle ${a.size}`, a.color].filter(Boolean).join(' · ');
+const articleLabel = (a) => [a.brand, a.name, a.size && `Talle ${a.size}`, a.color].filter(Boolean).join(' · ');
 
 // ---------- Pestañas ----------
 let currentTab = 'venta';
@@ -151,17 +151,46 @@ $('#charge').addEventListener('click', guard(async () => {
 // ---------- Artículos ----------
 async function loadArticles() {
   const q = encodeURIComponent($('#artSearch').value.trim());
-  const rows = await api('GET', `/articles?q=${q}&low=${$('#artLow').checked ? 1 : 0}`);
+  const brandSel = $('#artBrand').value;
+  const rows = await api('GET', `/articles?q=${q}&low=${$('#artLow').checked ? 1 : 0}${brandSel ? `&brand_id=${brandSel}` : ''}`);
   $('#artTable tbody').innerHTML = rows.map((a) => `
-    <tr><td>${esc(a.barcode || '—')}</td><td>${esc(a.name)}</td><td>${esc(a.category)}</td><td>${esc(a.size)}</td><td>${esc(a.color)}</td>
+    <tr><td>${esc(a.barcode || '—')}</td><td>${esc(a.brand || '—')}</td><td>${esc(a.name)}</td><td>${esc(a.category)}</td><td>${esc(a.size)}</td><td>${esc(a.color)}</td>
     <td class="num">${money(a.price)}</td><td class="num col-cost">${money(a.cost)}</td>
     <td class="num ${a.stock <= a.min_stock ? 'low' : ''}">${a.stock}</td>
     <td>${can('articulos.editar') ? `<button class="link" data-edit="${a.id}">Editar</button>` : ''}<button class="link" data-lbl="${a.id}">Etiqueta</button>${can('articulos.editar') ? `<button class="link" data-del="${a.id}">Baja</button>` : ''}</td></tr>`).join('')
-    || '<tr><td colspan="9" class="muted">Sin artículos</td></tr>';
+    || '<tr><td colspan="10" class="muted">Sin artículos</td></tr>';
   window._arts = rows;
+  await loadBrands();
   const cats = await api('GET', '/articles');
   $('#cats').innerHTML = [...new Set(cats.map((a) => a.category).filter(Boolean))].map((c) => `<option value="${esc(c)}">`).join('');
 }
+// Marcas: filtro, sugerencias del formulario y administración.
+async function loadBrands() {
+  const brands = await api('GET', '/brands');
+  const sel = $('#artBrand'), keep = sel.value;
+  sel.innerHTML = '<option value="">Todas las marcas</option>' + brands.map((b) => `<option value="${b.id}">${esc(b.name)}</option>`).join('');
+  sel.value = keep;
+  $('#brandList').innerHTML = brands.map((b) => `<option value="${esc(b.name)}">`).join('');
+  const edit = can('articulos.editar');
+  $('#brandForm').hidden = !edit;
+  $('#brandsTable tbody').innerHTML = brands.map((b) => `<tr><td>${esc(b.name)}</td><td class="num">${b.articles}</td>
+    <td>${edit ? `<button class="link" data-brename="${b.id}" data-name="${esc(b.name)}">Renombrar</button><button class="link" data-bdel="${b.id}">Borrar</button>` : ''}</td></tr>`).join('');
+}
+$('#artBrand').addEventListener('change', guard(loadArticles));
+$('#brandForm').addEventListener('submit', guard(async (e) => {
+  e.preventDefault();
+  await api('POST', '/brands', { name: $('#brandNew').value });
+  $('#brandNew').value = ''; toast('Marca agregada'); await loadBrands();
+}));
+$('#brandsTable').addEventListener('click', guard(async (e) => {
+  const d = e.target.dataset;
+  if (d.brename) {
+    const name = prompt('Nuevo nombre de la marca:', d.name);
+    if (name === null) return;
+    await api('PUT', '/brands/' + d.brename, { name }); toast('Marca renombrada'); await loadArticles();
+  }
+  if (d.bdel && confirm('¿Borrar esta marca? Solo se puede si no tiene artículos.')) { await api('DELETE', '/brands/' + d.bdel); toast('Marca borrada'); await loadBrands(); }
+}));
 $('#artSearch').addEventListener('input', debounce(guard(loadArticles)));
 $('#artLow').addEventListener('change', guard(loadArticles));
 let editingId = null;
@@ -171,7 +200,7 @@ function openArtDialog(a) {
   f.reset();
   $('#artTitle').textContent = a ? 'Editar artículo' : 'Nuevo artículo';
   $('#stockInitial').hidden = !!a;
-  for (const k of ['barcode', 'name', 'category', 'size', 'color', 'price', 'cost', 'min_stock']) if (a) f.elements[k].value = a[k] ?? '';
+  for (const k of ['barcode', 'brand', 'name', 'category', 'size', 'color', 'price', 'cost', 'min_stock']) if (a) f.elements[k].value = a[k] ?? '';
   $('#artDialog').showModal();
   f.elements.barcode.focus();
 }
@@ -313,6 +342,7 @@ async function loadStats() {
   const max = Math.max(1, ...series.map((r) => r.total));
   $('#chart').innerHTML = series.map((r) => `<div class="bar" title="${esc(r.period)}: ${money(r.total)}"><small>${money(r.total).replace(/\s/g, '')}</small><i style="height:${Math.round((r.total / max) * 85)}%"></i><em>${esc(group === 'day' ? r.period.slice(5) : r.period)}</em></div>`).join('') || '<span class="muted">Todavía no hay ventas</span>';
   $('#methodTable tbody').innerHTML = br.byMethod.map((m) => `<tr><td>${esc(m.method)}</td><td class="num">${money(m.total)}</td></tr>`).join('') || '<tr><td class="muted">Sin datos</td></tr>';
+  $('#brandStatsTable tbody').innerHTML = br.byBrand.map((r) => `<tr><td>${esc(r.brand)}</td><td class="num">${r.units} u.</td><td class="num">${money(r.total)}</td>${r.profit == null ? '' : `<td class="num">${money(r.profit)} <span class="muted">gan.</span></td>`}</tr>`).join('') || '<tr><td class="muted">Sin datos</td></tr>';
   $('#topTable tbody').innerHTML = br.topArticles.map((t) => `<tr><td>${esc(t.name)}</td><td class="num">${t.units} u.</td><td class="num">${money(t.total)}</td></tr>`).join('') || '<tr><td class="muted">Sin datos</td></tr>';
   $('#seriesTable tbody').innerHTML = [...series].reverse().map((r) => `<tr><td>${esc(r.period)}</td><td class="num">${r.sales}</td><td class="num">${r.units}</td><td class="num">${money(r.total)}</td><td class="num">${money(r.avg_ticket)}</td><td class="num">${r.profit == null ? '—' : money(r.profit)}</td></tr>`).join('');
   $('#sellerTable tbody').innerHTML = br.bySeller.map((v) => `<tr><td>${esc(v.seller)}</td><td class="num">${v.sales} ventas</td><td class="num">${money(v.total)}</td></tr>`).join('') || '<tr><td class="muted">Sin datos</td></tr>';
@@ -414,7 +444,7 @@ $('#lblScan').addEventListener('input', debounce(guard(() => {
 })));
 function labelHtml(a, w, h) {
   return `<div class="lbl" style="--w:${w}mm;--h:${h}mm">
-    <div class="n">${esc(a.name)}</div>
+    <div class="n">${a.brand ? `<span class="b">${esc(a.brand)}</span> ` : ''}${esc(a.name)}</div>
     <div class="t"><span class="s">${esc([a.size && `Talle ${a.size}`, a.color].filter(Boolean).join(' · '))}</span><span class="p">${money(a.price).replace(/,00$/, '')}</span></div>
     <div>${Barcode.svg(a.barcode, { height: Math.max(6, Math.round(h * 0.33)) + 'mm' })}<div class="code">${esc(a.barcode)}</div></div></div>`;
 }

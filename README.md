@@ -17,6 +17,7 @@ La interfaz usa el logo y la paleta de Liu Vi: verde agua `#37c2b9` (el del logo
 ## Funciones
 
 - **Artículos**: cada fila es un SKU (artículo + talle + color) con código de barras, precio, costo, stock y stock mínimo. Baja lógica para conservar el historial.
+- **Marcas**: vienen cargadas *Koxis*, *Adicta* e *Inversa*. Cada artículo tiene su marca (se elige o se escribe: si no existe se crea, sin duplicar por mayúsculas), se puede filtrar y buscar por marca, y la marca sale en las etiquetas, en el ticket y en las estadísticas de ventas por marca. Las marcas se agregan, renombran y borran (solo las que no tienen artículos) desde la pestaña *Artículos*.
 - **Stock**: ingresos de mercadería, devoluciones y ajustes (con historial de movimientos), valor del inventario y alertas de stock bajo. Las ventas descuentan stock y las anulaciones lo devuelven.
 - **Caja**: apertura con fondo inicial, ingresos y egresos manuales, cierre con efectivo contado y diferencia contra lo esperado, historial de cajas. No se puede vender con la caja cerrada.
 - **Ventas**: pago en efectivo, tarjeta o transferencia (se puede combinar), descuento %, vuelto y anulación.

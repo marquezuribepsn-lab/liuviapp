@@ -104,3 +104,5 @@ body.nocost .col-cost{display:none}
 .kpi b{color:var(--accent)}
 th{color:var(--muted)}tr:hover td{background:var(--soft)}
 .item:hover{background:var(--soft)}
+
+.lbl .n .b{text-transform:uppercase;font-size:7pt;letter-spacing:.4px;font-weight:700}
