@@ -242,8 +242,8 @@ export function createApp(db) {
   route('GET', '/api/stock/movements', 'stock.ver', ({ query }) => {
     const id = query.get('article_id');
     return db.prepare(`
-      SELECT m.*, a.name, a.size, a.color, u.name AS user_name FROM stock_movements m JOIN articles a ON a.id = m.article_id
-      LEFT JOIN users u ON u.id = m.user_id
+      SELECT m.*, a.name, a.size, a.color, b.name AS brand, u.name AS user_name FROM stock_movements m JOIN articles a ON a.id = m.article_id
+      LEFT JOIN brands b ON b.id = a.brand_id LEFT JOIN users u ON u.id = m.user_id
       WHERE (? IS NULL OR m.article_id = ?) ORDER BY m.id DESC LIMIT 200
     `).all(id, id);
   });
@@ -255,6 +255,37 @@ export function createApp(db) {
     FROM articles WHERE active = 1`).get();
     if (!can('costos.ver')) r.cost_value = null;
     return r;
+  });
+
+  // Limpiar el stock completo. Es irreversible: la pantalla pide dos confirmaciones y acá se exige la palabra LIMPIAR.
+  // Si hay carpeta de copias configurada, primero se hace una copia y, si falla, no se toca nada.
+  route('GET', '/api/stock/clear/preview', 'stock.limpiar', () => {
+    const sold = '(SELECT DISTINCT article_id FROM sale_items)';
+    const r = db.prepare(`SELECT COUNT(*) AS total, COALESCE(SUM(active),0) AS active, COALESCE(SUM(CASE WHEN active = 1 THEN stock ELSE 0 END),0) AS units,
+      COALESCE(SUM(CASE WHEN id IN ${sold} THEN 1 ELSE 0 END),0) AS with_sales FROM articles`).get();
+    return { ...r, deletable: r.total - r.with_sales, backup: !!backups.status().dir };
+  });
+  route('POST', '/api/stock/clear', 'stock.limpiar', ({ body, user }) => {
+    if (importer.isRunning()) throw new HttpError(409, 'Hay una carga de Excel en curso. Esperá a que termine.');
+    if (!['zero', 'delete'].includes(body.mode)) throw bad('Elegí qué querés hacer con el stock');
+    if (String(body.confirm ?? '').trim().toUpperCase() !== 'LIMPIAR') throw bad('Para confirmar, escribí la palabra LIMPIAR');
+    let backup = false;
+    if (backups.status().dir) {
+      try { backups.run('antes de limpiar el stock'); backup = true; }
+      catch (e) { throw new HttpError(500, `No se limpió nada: no se pudo hacer la copia de seguridad previa (${e.message}). Revisá la pestaña Copias.`); }
+    }
+    return tx(db, () => {
+      const sold = 'SELECT DISTINCT article_id FROM sale_items';
+      const withStock = db.prepare('SELECT id, stock FROM articles WHERE stock <> 0').all();
+      const units = withStock.reduce((s, a) => s + a.stock, 0);
+      for (const a of withStock) moveStock(a.id, -a.stock, 'limpieza', null, user.id); // queda registrado en los movimientos
+      if (body.mode === 'zero') return { mode: 'zero', zeroed: withStock.length, units, deleted: 0, deactivated: 0, backup };
+      // Borrar: lo que nunca se vendió desaparece; lo que tiene ventas queda dado de baja para no perder el historial.
+      db.prepare(`DELETE FROM stock_movements WHERE article_id NOT IN (${sold})`).run();
+      const deleted = db.prepare(`DELETE FROM articles WHERE id NOT IN (${sold})`).run().changes;
+      const deactivated = db.prepare(`UPDATE articles SET active = 0 WHERE active = 1`).run().changes;
+      return { mode: 'delete', zeroed: withStock.length, units, deleted, deactivated, backup };
+    });
   });
 
   // Caja

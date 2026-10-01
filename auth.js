@@ -9,6 +9,7 @@ export const PERMISSIONS = [
   { key: 'costos.ver', label: 'Ver costos y ganancias', group: 'Artículos' },
   { key: 'stock.ver', label: 'Ver stock y movimientos', group: 'Stock' },
   { key: 'stock.ajustar', label: 'Ingresar mercadería y ajustar stock', group: 'Stock' },
+  { key: 'stock.limpiar', label: 'Limpiar todo el stock (dejarlo en 0 o borrar todos los artículos)', group: 'Stock' },
   { key: 'caja.ver', label: 'Ver caja, movimientos e historial', group: 'Caja' },
   { key: 'caja.operar', label: 'Abrir y cerrar caja, registrar ingresos y egresos', group: 'Caja' },
   { key: 'estadisticas.ver', label: 'Ver estadísticas', group: 'Estadísticas' },

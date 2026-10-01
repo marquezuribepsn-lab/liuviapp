@@ -175,6 +175,9 @@ async function loadBrands() {
   const sel = $('#artBrand'), keep = sel.value;
   sel.innerHTML = '<option value="">Todas las marcas</option>' + brands.map((b) => `<option value="${b.id}">${esc(b.name)}</option>`).join('');
   sel.value = keep;
+  const sb = $('#sbBrand'), keepSb = sb.value;
+  sb.innerHTML = '<option value="">Todas las marcas</option>' + brands.map((b) => `<option value="${b.id}">${esc(b.name)}</option>`).join('');
+  sb.value = keepSb;
   $('#brandList').innerHTML = brands.map((b) => `<option value="${esc(b.name)}">`).join('');
   const edit = can('articulos.editar');
   $('#brandForm').hidden = !edit;
@@ -314,37 +317,114 @@ async function pollImport(id) {
 $('#impClose').addEventListener('click', () => $('#importDialog').close());
 
 // ---------- Stock ----------
-let adjArticle = null;
+let adjArticle = null, sbSeq = 0;
+const REASON = { inicial: 'Carga inicial', compra: 'Compra', venta: 'Venta', anulacion: 'Anulación de venta', ajuste: 'Ajuste', devolucion: 'Devolución', limpieza: 'Limpieza de stock' };
 async function loadStock() {
   const s = await api('GET', '/stock/summary');
   $('#stockSummary').innerHTML = [['Artículos (SKU)', s.skus], ['Unidades', s.units], ['Valor a costo', s.cost_value == null ? '—' : money(s.cost_value)], ['Valor a precio de venta', money(s.retail_value)], ['Con stock bajo', s.low]]
     .map(([k, v]) => `<div class="kpi"><span>${k}</span><b>${v}</b></div>`).join('');
   const movs = await api('GET', '/stock/movements');
-  $('#movTable tbody').innerHTML = movs.map((m) => `<tr><td>${esc(m.created_at.slice(5, 16))}</td><td>${esc(articleLabel(m))}</td><td class="num ${m.qty < 0 ? 'neg' : 'pos'}">${m.qty > 0 ? '+' : ''}${m.qty}</td><td>${esc(m.reason)}</td><td>${esc(m.user_name || '')}</td></tr>`).join('');
-  const low = await api('GET', '/articles?low=1');
-  $('#lowTable tbody').innerHTML = low.map((a) => `<tr><td>${esc(a.name)}</td><td>${esc(a.size)}</td><td>${esc(a.color)}</td><td class="low">${a.stock}</td><td>${a.min_stock}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">Todo en orden</td></tr>';
+  $('#movTable tbody').innerHTML = movs.map((m) => `<tr><td>${esc(m.created_at.slice(5, 16))}</td><td>${esc(articleLabel(m))}</td><td class="num ${m.qty < 0 ? 'neg' : 'pos'}">${m.qty > 0 ? '+' : ''}${m.qty}</td><td>${esc(REASON[m.reason] || m.reason)}</td><td>${esc(m.user_name || '')}</td></tr>`).join('')
+    || '<tr><td colspan="5" class="muted">Todavía no hay movimientos</td></tr>';
+  const low = await api('GET', '/articles?low=1&limit=500');
+  $('#lowTable tbody').innerHTML = low.map((a) => `<tr><td>${esc(a.brand || '—')}</td><td>${esc(a.name)}</td><td>${esc(a.size)}</td><td>${esc(a.color)}</td><td class="num low">${a.stock}</td><td class="num">${a.min_stock}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Todo en orden</td></tr>';
+  await loadBrands(); // llena el filtro de marcas de la lista de búsqueda
+  await runStockBrowse();
 }
-function pickAdj(a) { adjArticle = a; $('#adjArticle').textContent = `${articleLabel(a)} — stock actual: ${a.stock}`; $('#adjQty').focus(); $('#adjQty').select(); }
+
+// Lista de búsqueda a la derecha del buscador: se filtra mientras se escribe y se elige con un clic.
+async function runStockBrowse() {
+  const q = $('#adjScan').value.trim(), brand = $('#sbBrand').value, low = $('#sbLow').checked, my = ++sbSeq;
+  if (!q && !brand && !low) {
+    $('#sbTable tbody').innerHTML = '<tr><td colspan="5" class="muted">Escribí o escaneá a la izquierda, o elegí una marca arriba, para ver los artículos.</td></tr>';
+    $('#sbNote').textContent = ''; return;
+  }
+  const rows = await api('GET', `/articles?q=${encodeURIComponent(q)}${brand ? `&brand_id=${brand}` : ''}${low ? '&low=1' : ''}&limit=300`);
+  const total = api.total;
+  if (my !== sbSeq) return; // llegó una respuesta de una búsqueda anterior
+  window._sb = rows;
+  $('#sbTable tbody').innerHTML = rows.map((a) => `<tr data-id="${a.id}" class="${adjArticle?.id === a.id ? 'sel' : ''}"><td>${esc(a.brand || '—')}</td><td>${esc(a.name)}</td><td>${esc(a.size)}</td><td>${esc(a.color)}</td><td class="num ${a.stock <= a.min_stock ? 'low' : ''}">${a.stock}</td></tr>`).join('')
+    || '<tr><td colspan="5" class="muted">No se encontró ningún artículo</td></tr>';
+  $('#sbNote').textContent = total > rows.length ? `Mostrando ${rows.length} de ${total}: afiná la búsqueda para ver el resto.` : `${total} artículo${total === 1 ? '' : 's'}. Tocá uno para elegirlo.`;
+}
+const browseSoon = debounce(guard(runStockBrowse), 200);
+$('#adjScan').addEventListener('input', browseSoon);
+$('#sbBrand').addEventListener('change', guard(runStockBrowse));
+$('#sbLow').addEventListener('change', guard(runStockBrowse));
+$('#sbTable').addEventListener('click', (e) => {
+  const tr = e.target.closest('tr[data-id]');
+  if (tr && !$('#adjCard').hidden) pickAdj(window._sb.find((a) => a.id == tr.dataset.id));
+});
+function pickAdj(a) {
+  adjArticle = a;
+  $('#adjArticle').className = 'adjSel on';
+  $('#adjArticle').innerHTML = `<b>${esc(articleLabel(a))}</b><br>Stock actual: <b class="${a.stock <= a.min_stock ? 'low' : ''}">${a.stock}</b>`;
+  $$('#sbTable tbody tr').forEach((tr) => tr.classList.toggle('sel', tr.dataset.id == a.id));
+  $('#adjQty').focus(); $('#adjQty').select();
+}
+function clearAdjSelection() {
+  adjArticle = null; $('#adjArticle').className = 'adjSel muted'; $('#adjArticle').textContent = 'Ningún artículo seleccionado. Elegilo en la lista de la derecha.';
+}
 $('#adjScan').addEventListener('keydown', guard(async (e) => {
   if (e.key !== 'Enter') return;
   e.preventDefault();
   const code = e.target.value.trim();
   if (!code) return;
-  try { pickAdj(await api('GET', '/articles/barcode/' + encodeURIComponent(code))); }
+  try { pickAdj(await api('GET', '/articles/barcode/' + encodeURIComponent(code))); e.target.value = ''; await runStockBrowse(); }
   catch {
     const list = await api('GET', '/articles?q=' + encodeURIComponent(code));
-    if (list.length === 1) pickAdj(list[0]); else toast(list.length ? `${list.length} coincidencias: afiná la búsqueda o escaneá el código` : 'No encontrado', true);
+    if (list.length === 1) { pickAdj(list[0]); e.target.value = ''; await runStockBrowse(); }
+    else toast(list.length ? `${list.length} coincidencias: elegí una de la lista` : 'No encontrado', !list.length);
   }
-  e.target.value = '';
 }));
 $('#adjForm').addEventListener('submit', guard(async (e) => {
   e.preventDefault();
-  if (!adjArticle) throw new Error('Elegí un artículo');
+  if (!adjArticle) throw new Error('Elegí un artículo de la lista');
   const a = await api('POST', '/stock/adjust', { article_id: adjArticle.id, qty: Number($('#adjQty').value), reason: $('#adjReason').value });
-  toast(`Stock actualizado: ${a.stock}`);
-  adjArticle = null; $('#adjArticle').textContent = 'Ningún artículo seleccionado'; $('#adjScan').focus();
+  toast(`Stock actualizado: ${articleLabel(a)} → ${a.stock}`);
+  // La búsqueda se conserva (con el stock ya actualizado): así se cargan seguidos los demás talles del mismo modelo.
+  clearAdjSelection(); $('#adjQty').value = 1; $('#adjScan').focus(); $('#adjScan').select();
   await loadStock();
 }));
+
+// Limpiar el stock completo: dos confirmaciones (elegir y confirmar, y escribir la palabra LIMPIAR).
+let clrPreview = null;
+const clrMode = () => document.querySelector('input[name=clrMode]:checked').value;
+const clrShow = (n) => [1, 2, 3].forEach((i) => ($('#clrStep' + i).hidden = i !== n));
+$$('input[name=clrMode]').forEach((r) => r.addEventListener('change', () => $$('.opt').forEach((o) => o.classList.toggle('sel', o.querySelector('input').checked))));
+$('#stockClear').addEventListener('click', guard(async () => {
+  clrPreview = await api('GET', '/stock/clear/preview');
+  const p = clrPreview, n = (x) => Number(x).toLocaleString('es-AR');
+  $('#clrCounts').textContent = p.total ? `Hay ${n(p.active)} artículos activos con ${n(p.units)} unidades en stock${p.with_sales ? `; ${n(p.with_sales)} tienen ventas registradas` : ''}.` : 'No hay artículos cargados.';
+  $('#clrBackup').innerHTML = p.backup ? '✔ Antes de limpiar se hace una copia de seguridad en tu carpeta de copias.'
+    : '<span class="neg">⚠ No tenés carpeta de copias configurada (pestaña Copias): después de limpiar no se puede recuperar nada.</span>';
+  document.querySelector('input[name=clrMode][value=zero]').checked = true; $$('.opt').forEach((o, i) => o.classList.toggle('sel', i === 0));
+  $('#clrNext').disabled = !p.total; clrShow(1); $('#clearDialog').showModal();
+}));
+$('#clrCancel1').addEventListener('click', () => $('#clearDialog').close());
+$('#clrClose').addEventListener('click', () => $('#clearDialog').close());
+$('#clrNext').addEventListener('click', () => {
+  const p = clrPreview, n = (x) => Number(x).toLocaleString('es-AR');
+  $('#clrSummary').textContent = clrMode() === 'zero'
+    ? `Vas a dejar en 0 el stock de TODOS los artículos (${n(p.units)} unidades).`
+    : `Vas a BORRAR ${n(p.deletable)} artículos${p.with_sales ? ` y dar de baja ${n(p.with_sales)} que tienen ventas` : ''}, junto con todo su stock (${n(p.units)} unidades).`;
+  $('#clrWord').value = ''; $('#clrGo').disabled = true; setMsg('clrError', ''); clrShow(2); $('#clrWord').focus();
+});
+$('#clrBack').addEventListener('click', () => clrShow(1));
+$('#clrWord').addEventListener('input', () => { $('#clrGo').disabled = $('#clrWord').value.trim().toUpperCase() !== 'LIMPIAR'; });
+$('#clrGo').addEventListener('click', async () => {
+  $('#clrGo').disabled = true; setMsg('clrError', '');
+  try {
+    const r = await api('POST', '/stock/clear', { mode: clrMode(), confirm: $('#clrWord').value });
+    const n = (x) => Number(x).toLocaleString('es-AR');
+    $('#clrTitle').textContent = '✔ Stock limpio';
+    $('#clrResult').textContent = (r.mode === 'zero'
+      ? `Se dejó en 0 el stock de ${n(r.zeroed)} artículos (${n(r.units)} unidades).`
+      : `Se borraron ${n(r.deleted)} artículos${r.deactivated ? ` y se dieron de baja ${n(r.deactivated)} con ventas` : ''}.`) + (r.backup ? ' Se hizo una copia de seguridad antes.' : '');
+    clrShow(3); toast('Stock limpiado');
+    await loadStock();
+  } catch (err) { setMsg('clrError', err.message); $('#clrGo').disabled = false; }
+});
 
 // ---------- Caja ----------
 async function loadCash() {
@@ -809,6 +889,7 @@ async function boot() {
   appReady = true; startIdleWatch();
   document.body.classList.toggle('nocost', !can('costos.ver'));
   $('#adjCard').hidden = !can('stock.ajustar');
+  $('#clearCard').hidden = !can('stock.limpiar');
   $('#artNew').hidden = $('#artImport').hidden = !can('articulos.editar');
   let first = null;
   $$('#tabs button').forEach((b) => { const ok = canAny(...TAB_PERMS[b.dataset.tab]); b.hidden = !ok; if (ok && !first) first = b.dataset.tab; });

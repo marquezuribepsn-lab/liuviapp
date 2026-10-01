@@ -274,5 +274,5 @@ export function createImporter(db, { resolveBrand, moveStock, tx }) {
     };
   }
 
-  return { preview, start, status, template: buildTemplate };
+  return { preview, start, status, template: buildTemplate, isRunning: () => !!running };
 }

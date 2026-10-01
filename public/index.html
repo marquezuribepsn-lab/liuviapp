@@ -218,19 +218,67 @@
     <div class="card" id="adjCard">
       <h2>Ingreso / ajuste de stock</h2>
       <form id="adjForm">
-        <label>Artículo (escaneá el código o buscá) <input id="adjScan" autocomplete="off"></label>
-        <div id="adjArticle" class="muted">Ningún artículo seleccionado</div>
-        <label>Motivo
-          <select id="adjReason"><option value="compra">Compra / ingreso de mercadería</option><option value="devolucion">Devolución de cliente</option><option value="ajuste">Ajuste de inventario</option></select>
-        </label>
-        <label>Cantidad (negativa para restar) <input id="adjQty" type="number" step="1" value="1"></label>
+        <label>Artículo (escaneá el código o buscá) <input id="adjScan" autocomplete="off" placeholder="Código de barras, nombre, marca, color…"></label>
+        <div id="adjArticle" class="adjSel muted">Ningún artículo seleccionado. Elegilo en la lista de la derecha.</div>
+        <div class="grid2">
+          <label>Motivo
+            <select id="adjReason"><option value="compra">Compra / ingreso de mercadería</option><option value="devolucion">Devolución de cliente</option><option value="ajuste">Ajuste de inventario</option></select>
+          </label>
+          <label>Cantidad (negativa para restar) <input id="adjQty" type="number" step="1" value="1"></label>
+        </div>
         <button class="primary">Aplicar</button>
       </form>
     </div>
-    <div class="card"><h2>Últimos movimientos</h2><table id="movTable"><thead><tr><th>Fecha</th><th>Artículo</th><th>Cant.</th><th>Motivo</th><th>Usuario</th></tr></thead><tbody></tbody></table></div>
+    <div class="card" id="stockBrowser">
+      <h2>Buscar artículo</h2>
+      <div class="row">
+        <select id="sbBrand" style="width:auto"><option value="">Todas las marcas</option></select>
+        <label class="inline"><input type="checkbox" id="sbLow"> Solo stock bajo o agotado</label>
+      </div>
+      <div class="scrollBox" style="max-height:260px">
+        <table id="sbTable"><thead><tr><th>Marca</th><th>Artículo</th><th>Talle</th><th>Color</th><th class="num">Stock</th></tr></thead><tbody></tbody></table>
+      </div>
+      <p class="muted" id="sbNote" style="margin:6px 0 0"></p>
+    </div>
   </div>
+
   <h2>Stock bajo o agotado</h2>
-  <table id="lowTable"><thead><tr><th>Artículo</th><th>Talle</th><th>Color</th><th>Stock</th><th>Mínimo</th></tr></thead><tbody></tbody></table>
+  <div class="scrollBox" style="max-height:260px"><table id="lowTable"><thead><tr><th>Marca</th><th>Artículo</th><th>Talle</th><th>Color</th><th class="num">Stock</th><th class="num">Mínimo</th></tr></thead><tbody></tbody></table></div>
+
+  <div class="card" id="movCard" style="margin-top:16px">
+    <h2>Últimos movimientos</h2>
+    <div class="scrollBox"><table id="movTable"><thead><tr><th>Fecha</th><th>Artículo</th><th class="num">Cantidad</th><th>Motivo</th><th>Usuario</th></tr></thead><tbody></tbody></table></div>
+  </div>
+
+  <div class="card dangerCard" id="clearCard" hidden>
+    <h2>Limpiar stock</h2>
+    <p class="muted">Para empezar de cero (por ejemplo, después de probar con datos de ejemplo). Pide dos confirmaciones y no se puede deshacer.</p>
+    <button type="button" id="stockClear" class="danger">Limpiar stock completo…</button>
+  </div>
+
+  <dialog id="clearDialog" class="wide">
+    <div id="clrStep1">
+      <h2>Limpiar stock completo</h2>
+      <p id="clrCounts" class="muted"></p>
+      <label class="opt sel"><input type="radio" name="clrMode" value="zero" checked> <b>Dejar todo el stock en 0</b><br><span class="muted">Los artículos, sus precios y las marcas se conservan. Cada baja queda registrada en «Últimos movimientos».</span></label>
+      <label class="opt"><input type="radio" name="clrMode" value="delete"> <b>Borrar todos los artículos y su stock</b> (empezar de cero)<br><span class="muted">Se borran los artículos que nunca se vendieron. Los que ya tienen ventas quedan dados de baja, para no perder el historial. Las marcas se conservan.</span></label>
+      <p id="clrBackup" style="margin:10px 0 0"></p>
+      <div class="row end"><button type="button" class="ghost" id="clrCancel1">Cancelar</button><button type="button" class="danger" id="clrNext">Continuar</button></div>
+    </div>
+    <div id="clrStep2" hidden>
+      <h2 class="neg">Última confirmación</h2>
+      <p id="clrSummary" style="font-size:16px"></p>
+      <p><b>Esto no se puede deshacer.</b></p>
+      <label>Para confirmar, escribí la palabra <b>LIMPIAR</b> <input id="clrWord" autocomplete="off" placeholder="LIMPIAR"></label>
+      <div class="msg" id="clrError"></div>
+      <div class="row end"><button type="button" class="ghost" id="clrBack">Volver</button><button type="button" class="danger" id="clrGo" disabled>Sí, limpiar todo</button></div>
+    </div>
+    <div id="clrStep3" hidden>
+      <h2 id="clrTitle">Listo</h2>
+      <p id="clrResult"></p>
+      <div class="row end"><button type="button" class="primary" id="clrClose">Cerrar</button></div>
+    </div>
+  </dialog>
 </section>
 
 <!-- ETIQUETAS -->
