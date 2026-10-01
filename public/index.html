@@ -32,11 +32,10 @@
 <header>
   <h1><img class="logo" src="/img/logo-blanco.png" alt="Liu Vi"></h1>
   <nav id="tabs">
-    <button data-tab="venta" class="active">Vender</button>
+    <button data-tab="venta" class="active">Ventas y caja</button>
     <button data-tab="articulos">Artículos</button>
     <button data-tab="stock">Stock</button>
     <button data-tab="etiquetas">Etiquetas</button>
-    <button data-tab="caja">Caja</button>
     <button data-tab="stats">Estadísticas</button>
     <button data-tab="usuarios">Usuarios</button>
     <button data-tab="copias">Copias</button>
@@ -48,8 +47,14 @@
 <div id="toast"></div>
 <main>
 
-<!-- VENDER -->
+<!-- VENTAS Y CAJA -->
 <section id="venta" class="tab">
+  <div id="cajaClosed" class="card" hidden>
+    <h2>Caja cerrada</h2>
+    <form id="openForm" class="row"><label>Monto inicial en efectivo <input id="openAmount" type="number" min="0" step="0.01" value="0"></label><button class="primary">Abrir caja</button></form>
+  </div>
+  <div id="cajaKpis" class="kpis" hidden></div>
+  <div id="posBox" hidden>
   <div class="split">
     <div>
       <input id="scan" autofocus autocomplete="off" placeholder="Escaneá el código de barras o buscá por nombre y presioná Enter">
@@ -83,6 +88,34 @@
       </div>
     </div>
   </div>
+  </div>
+  <div id="cajaOpen" hidden>
+    <div class="split">
+      <div class="card" id="cajaOps">
+        <h2>Ingreso / egreso manual</h2>
+        <form id="movForm">
+          <label>Tipo <select id="movType"><option value="egreso">Egreso (gasto, retiro)</option><option value="ingreso">Ingreso</option></select></label>
+          <label>Medio <select id="movMethod"><option>efectivo</option><option>tarjeta</option><option>transferencia</option></select></label>
+          <label>Monto <input id="movAmount" type="number" min="0.01" step="0.01" required></label>
+          <label>Concepto <input id="movConcept" required placeholder="Ej: Bolsas, proveedor, retiro"></label>
+          <button class="primary">Registrar</button>
+        </form>
+        <hr>
+        <h2>Cerrar caja</h2>
+        <form id="closeForm">
+          <div id="expected" class="muted"></div>
+          <label>Efectivo contado <input id="closeCounted" type="number" min="0" step="0.01" required></label>
+          <label>Observaciones <input id="closeNote"></label>
+          <button class="danger">Cerrar caja</button>
+        </form>
+      </div>
+      <div class="card" id="cajaMovs"><h2>Movimientos de la caja</h2><table id="cashMovTable"><thead><tr><th>Hora</th><th>Tipo</th><th>Medio</th><th>Monto</th><th>Concepto</th><th>Usuario</th></tr></thead><tbody></tbody></table></div>
+    </div>
+  </div>
+  <h2>Ventas de hoy</h2>
+  <table id="salesTable"><thead><tr><th>#</th><th>Hora</th><th>Vendedor</th><th>Detalle</th><th>Pago</th><th>Total</th><th></th></tr></thead><tbody></tbody></table>
+  <div id="sessionsBox"><h2>Historial de cajas</h2>
+  <table id="sessionsTable"><thead><tr><th>#</th><th>Apertura</th><th>Cierre</th><th>Responsable</th><th>Inicial</th><th>Ventas</th><th>Esperado</th><th>Contado</th><th>Diferencia</th></tr></thead><tbody></tbody></table></div>
 </section>
 
 <!-- ARTÍCULOS -->
@@ -191,42 +224,6 @@
       <button id="testTicket" class="ghost">Imprimir ticket de prueba</button>
     </div>
   </div>
-</section>
-
-<!-- CAJA -->
-<section id="caja" class="tab" hidden>
-  <div id="cajaClosed" class="card" hidden>
-    <h2>Caja cerrada</h2>
-    <form id="openForm" class="row"><label>Monto inicial en efectivo <input id="openAmount" type="number" min="0" step="0.01" value="0"></label><button class="primary">Abrir caja</button></form>
-  </div>
-  <div id="cajaOpen" hidden>
-    <div id="cajaKpis" class="kpis"></div>
-    <div class="split">
-      <div class="card" id="cajaOps">
-        <h2>Ingreso / egreso manual</h2>
-        <form id="movForm">
-          <label>Tipo <select id="movType"><option value="egreso">Egreso (gasto, retiro)</option><option value="ingreso">Ingreso</option></select></label>
-          <label>Medio <select id="movMethod"><option>efectivo</option><option>tarjeta</option><option>transferencia</option></select></label>
-          <label>Monto <input id="movAmount" type="number" min="0.01" step="0.01" required></label>
-          <label>Concepto <input id="movConcept" required placeholder="Ej: Bolsas, proveedor, retiro"></label>
-          <button class="primary">Registrar</button>
-        </form>
-        <hr>
-        <h2>Cerrar caja</h2>
-        <form id="closeForm">
-          <div id="expected" class="muted"></div>
-          <label>Efectivo contado <input id="closeCounted" type="number" min="0" step="0.01" required></label>
-          <label>Observaciones <input id="closeNote"></label>
-          <button class="danger">Cerrar caja</button>
-        </form>
-      </div>
-      <div class="card" id="cajaMovs"><h2>Movimientos de la caja</h2><table id="cashMovTable"><thead><tr><th>Hora</th><th>Tipo</th><th>Medio</th><th>Monto</th><th>Concepto</th><th>Usuario</th></tr></thead><tbody></tbody></table></div>
-    </div>
-  </div>
-  <h2>Ventas de hoy</h2>
-  <table id="salesTable"><thead><tr><th>#</th><th>Hora</th><th>Vendedor</th><th>Detalle</th><th>Pago</th><th>Total</th><th></th></tr></thead><tbody></tbody></table>
-  <div id="sessionsBox"><h2>Historial de cajas</h2>
-  <table id="sessionsTable"><thead><tr><th>#</th><th>Apertura</th><th>Cierre</th><th>Responsable</th><th>Inicial</th><th>Ventas</th><th>Esperado</th><th>Contado</th><th>Diferencia</th></tr></thead><tbody></tbody></table></div>
 </section>
 
 <!-- ESTADÍSTICAS -->
