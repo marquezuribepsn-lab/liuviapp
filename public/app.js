@@ -307,7 +307,7 @@ $('#groupSeg').addEventListener('click', guard(async (e) => {
 // ---------- Impresión ----------
 const SETTINGS_KEY = 'liuvi.print';
 const settings = (() => {
-  const d = { name: '', info: '', paper: '80', footer: '¡Gracias por su compra!', auto: false };
+  const d = { name: '', info: '', paper: 'a4', pageSize: 'A4', footer: '¡Gracias por su compra!', auto: false, lblFormat: 'sheet', lblPreset: '60x35', lblW: 60, lblH: 35, lblMargin: 8, lblSkip: 0 };
   try { return { ...d, ...JSON.parse(localStorage.getItem(SETTINGS_KEY)) }; } catch { return d; }
 })();
 const saveSettings = () => { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch { /* sin almacenamiento */ } };
@@ -327,7 +327,7 @@ function printHtml(html, pageCss) {
 }
 
 function ticketHtml(s) {
-  const w = settings.paper === '58' ? '48mm' : '72mm';
+  const w = { 58: '48mm', 80: '72mm' }[settings.paper] || '80mm';
   const row = (a, b, cls = '') => `<div class="r ${cls}"><span>${a}</span><span>${b}</span></div>`;
   const pays = s.payments.map((p) => (p.method === 'efectivo' && s.change
     ? row('Efectivo recibido', money(p.amount + s.change)) + row('Vuelto', money(s.change))
@@ -347,7 +347,10 @@ function ticketHtml(s) {
     <div class="c" style="font-size:10px">Documento no válido como factura</div>
   </div>`;
 }
-const printTicket = (s) => printHtml(ticketHtml(s), 'size:' + (settings.paper === '58' ? '58mm' : '80mm') + ' auto;margin:3mm');
+const pageName = () => (settings.pageSize === 'letter' ? 'letter' : 'A4');
+const PAGE_MM = () => (settings.pageSize === 'letter' ? [215.9, 279.4] : [210, 297]);
+// Térmica: página del ancho del rollo y largo automático. Común: hoja completa con el ticket arriba.
+const printTicket = (s) => printHtml(ticketHtml(s), { 58: 'size:58mm auto;margin:3mm', 80: 'size:80mm auto;margin:3mm' }[settings.paper] || `size:${pageName()} portrait;margin:10mm`);
 $('#lastTicket').addEventListener('click', () => (lastTicket ? printTicket(lastTicket) : toast('Todavía no hay un ticket para reimprimir', true)));
 $('#autoTicket').checked = settings.auto;
 $('#autoTicket').addEventListener('change', (e) => { settings.auto = e.target.checked; saveSettings(); });
@@ -391,19 +394,47 @@ function labelHtml(a, w, h) {
     <div class="t"><span class="s">${esc([a.size && `Talle ${a.size}`, a.color].filter(Boolean).join(' · '))}</span><span class="p">${money(a.price).replace(/,00$/, '')}</span></div>
     <div>${Barcode.svg(a.barcode, { height: Math.max(6, Math.round(h * 0.33)) + 'mm' })}<div class="code">${esc(a.barcode)}</div></div></div>`;
 }
+// Cuántas etiquetas entran por hoja según medida y margen.
+function sheetFit() {
+  const [pw, ph] = PAGE_MM();
+  const w = Number($('#lblW').value) || 60, h = Number($('#lblH').value) || 35, m = Math.max(0, Number($('#lblMargin').value) || 0);
+  return { w, h, m, cols: Math.floor((pw - 2 * m) / w), rows: Math.floor((ph - 2 * m) / h) };
+}
+function updateFit() {
+  const roll = $('#lblFormat').value === 'roll';
+  $('#lblMarginBox').hidden = $('#lblSkipBox').hidden = roll;
+  const f = sheetFit();
+  $('#lblFit').textContent = roll ? 'Una etiqueta por página; configurá el tamaño de papel de tu impresora de etiquetas.'
+    : f.cols && f.rows ? `Entran ${f.cols * f.rows} por hoja (${f.cols} columnas × ${f.rows} filas). Se imprimen con borde punteado para recortar.` : 'La etiqueta no entra en la hoja: reducí el tamaño o el margen.';
+}
+$('#lblPreset').addEventListener('change', () => {
+  const v = $('#lblPreset').value;
+  if (v !== 'custom') { [$('#lblW').value, $('#lblH').value] = v.split('x'); ['lblW', 'lblH'].forEach((k) => (settings[k] = Number($('#' + k).value))); }
+  updateFit();
+});
 $('#lblPrint').addEventListener('click', guard(async () => {
   if (!labels.length) throw new Error('Agregá al menos un artículo');
   const sinCodigo = labels.filter((l) => !l.a.barcode);
   if (sinCodigo.length) throw new Error(`Sin código de barras: ${sinCodigo.map((l) => l.a.name).join(', ')}. Editá el artículo y usá "Generar".`);
-  const w = Math.max(20, Number($('#lblW').value) || 50), h = Math.max(15, Number($('#lblH').value) || 30);
-  const sheet = $('#lblFormat').value === 'sheet';
-  const html = labels.flatMap((l) => Array(l.copies).fill(labelHtml(l.a, w, h))).join('');
-  printHtml(`<div class="${sheet ? 'sheet' : 'roll'}">${html}</div>`, sheet ? 'size:A4;margin:8mm' : `size:${w}mm ${h}mm;margin:0`);
+  const roll = $('#lblFormat').value === 'roll';
+  const f = sheetFit();
+  if (!roll && (!f.cols || !f.rows)) throw new Error('La etiqueta no entra en la hoja: reducí el tamaño o el margen.');
+  const skip = roll ? 0 : Math.max(0, Math.floor(Number($('#lblSkip').value) || 0));
+  const blanks = Array(skip).fill(`<div class="lbl blank" style="--w:${f.w}mm;--h:${f.h}mm"></div>`);
+  const html = [...blanks, ...labels.flatMap((l) => Array(l.copies).fill(labelHtml(l.a, f.w, f.h)))].join('');
+  printHtml(roll ? `<div class="roll">${html}</div>` : `<div class="sheet" style="width:${f.cols * f.w}mm">${html}</div>`,
+    roll ? `size:${f.w}mm ${f.h}mm;margin:0` : `size:${pageName()} portrait;margin:${f.m}mm`);
 }));
 
 // Ajustes
 const bindSetting = (id, key) => { const el = $('#' + id); el.value = settings[key]; el.addEventListener('input', () => { settings[key] = el.value; saveSettings(); }); };
-bindSetting('setName', 'name'); bindSetting('setInfo', 'info'); bindSetting('setPaper', 'paper'); bindSetting('setFooter', 'footer');
+bindSetting('setName', 'name'); bindSetting('setInfo', 'info'); bindSetting('setPaper', 'paper'); bindSetting('setFooter', 'footer'); bindSetting('setPage', 'pageSize');
+for (const [id, key] of [['lblFormat', 'lblFormat'], ['lblPreset', 'lblPreset'], ['lblW', 'lblW'], ['lblH', 'lblH'], ['lblMargin', 'lblMargin'], ['lblSkip', 'lblSkip']]) bindSetting(id, key);
+['lblFormat', 'lblPreset', 'lblW', 'lblH', 'lblMargin', 'lblSkip', 'setPage'].forEach((id) => $('#' + id).addEventListener('input', updateFit));
+// Editar medidas a mano pasa el preset a "Personalizado".
+['lblW', 'lblH'].forEach((id) => $('#' + id).addEventListener('input', () => { $('#lblPreset').value = 'custom'; settings.lblPreset = 'custom'; saveSettings(); }));
+$('#lblPreset').addEventListener('change', () => { settings.lblPreset = $('#lblPreset').value; saveSettings(); });
+updateFit();
 $('#testTicket').addEventListener('click', () => printTicket({
   id: 0, created_at: new Date().toLocaleString('sv-SE'), subtotal: 30000, discount: 3000, total: 27000, change: 3000,
   items: [{ name: 'Remera lisa · M · Negro', qty: 2, price: 10000 }, { name: 'Gorra · U', qty: 1, price: 10000 }],

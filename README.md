@@ -15,11 +15,12 @@ npm test
 - **Ventas**: pago en efectivo, tarjeta o transferencia (se puede combinar), descuento %, vuelto y anulación.
 - **Estadísticas**: ventas, unidades, ticket promedio y ganancia por **día, semana, mes y año**; desglose por medio de pago y artículos más vendidos.
 - **Lector de código de barras**: cualquier lector USB/Bluetooth que funcione como teclado. En *Vender* la pantalla siempre escucha el escáner; también sirve en *Artículos* y *Stock*. Si un artículo no tiene código, el botón *Generar* crea uno interno (EAN-13, prefijo 200) para imprimir como etiqueta.
-- **Impresión de tickets y etiquetas** (sin drivers especiales, usa el cuadro de impresión del navegador):
-  - *Ticket* de 58 u 80 mm con nombre del local, detalle, descuento, medios de pago y vuelto. Se imprime solo al cobrar (opción en *Vender*), con *Último ticket*, o desde *Caja → Ventas de hoy*.
-  - *Etiquetas* con nombre, talle, color, precio y código de barras, para rollo (una por hoja, tamaño configurable, por defecto 50×30 mm) o para hoja A4. Se arman en la pestaña *Etiquetas* o con el botón *Etiqueta* de cada artículo; las copias pueden igualar el stock.
-  - Los códigos se dibujan como EAN-13 (si son 13 dígitos válidos, como los que genera el botón *Generar*) o Code 128, y se verificaron con un decodificador independiente.
-  - Al imprimir, elegí la impresora y desactivá encabezados y pie de página del navegador.
+- **Impresión de tickets y etiquetas** (sin drivers especiales, usa el cuadro de impresión del navegador). Viene configurada para una **impresora común en hoja A4** (también hay Carta, y térmicas de 58/80 mm):
+  - *Ticket*: nombre del local, detalle, descuento, medios de pago y vuelto. En impresora común sale arriba de la hoja con ancho de ticket. Se imprime solo al cobrar (opción en *Vender*), con *Último ticket*, o desde *Caja → Ventas de hoy*.
+  - *Etiquetas* con nombre, talle, color, precio y código de barras. En hoja se acomodan en grilla con borde punteado para recortar; el programa calcula cuántas entran según tamaño y margen, y se puede **saltear etiquetas** para reutilizar una hoja ya usada. También hay modo rollo (una por página). Se arman en la pestaña *Etiquetas* o con el botón *Etiqueta* de cada artículo; las copias pueden igualar el stock.
+  - Los códigos se dibujan como EAN-13 (si son 13 dígitos válidos, como los que genera el botón *Generar*) o Code 128, y se verificaron con un decodificador independiente sobre el PDF impreso.
+  - En el cuadro de impresión: escala 100 % («Tamaño real»), sin «Encabezados y pie de página».
+  - Los ajustes se guardan en el navegador de cada PC.
 
 ## Notas
 

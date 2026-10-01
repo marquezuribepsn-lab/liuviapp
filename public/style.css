@@ -69,7 +69,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 .ticket .tot{font-size:15px;font-weight:700}
 .lbl{box-sizing:border-box;width:var(--w);height:var(--h);padding:1.5mm;overflow:hidden;display:flex;flex-direction:column;justify-content:space-between;font-family:Arial,sans-serif;color:#000;background:#fff;break-inside:avoid;page-break-inside:avoid}
 .roll .lbl{break-after:page;page-break-after:always}
-.sheet{display:flex;flex-wrap:wrap;gap:0}.sheet .lbl{outline:1px dashed #aaa}
+.sheet{display:flex;flex-wrap:wrap;gap:0;align-content:flex-start}.sheet .lbl{outline:1px dashed #aaa;outline-offset:-1px}.sheet .lbl.blank{outline:0}
 .lbl .n{font-size:9pt;font-weight:700;line-height:1.1;max-height:2.3em;overflow:hidden}
 .lbl .s{font-size:8pt}.lbl .p{font-size:13pt;font-weight:700}
 .lbl .t{display:flex;justify-content:space-between;align-items:baseline}
