@@ -59,6 +59,7 @@ export function createBackups(db) {
   function status() {
     const dir = get('backup_dir');
     return {
+      db_file: db.prepare('PRAGMA database_list').get()?.file || null,
       dir, auto: get('backup_auto', '1') === '1',
       last_at: get('backup_last_at') || null, last_file: get('backup_last_file') || null,
       last_reason: get('backup_last_reason') || null, error: get('backup_error') || null,

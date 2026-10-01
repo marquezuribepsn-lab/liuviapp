@@ -1,11 +1,15 @@
 import { createServer } from 'node:http';
-import { openDb, defaultDbPath } from './db.js';
+import { openDb, defaultDbPath, migrateLegacyDb } from './db.js';
 import { createApp } from './app.js';
 
 const port = Number(process.env.PORT) || 3000;
 // Una sola computadora: por defecto solo acepta conexiones de esta misma PC.
 // Para abrirlo a la red del local: HOST=0.0.0.0 npm start
 const host = process.env.HOST || '127.0.0.1';
+if (!process.env.DB_PATH) {
+  const m = migrateLegacyDb();
+  if (m.migrated) console.log(`Se trasladó tu base de datos anterior:\n  de ${m.from}\n  a ${m.to}\n(la original queda como respaldo)`);
+}
 const app = createApp(openDb());
 app.backups.start();
 const server = createServer(app);
