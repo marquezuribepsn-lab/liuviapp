@@ -326,6 +326,7 @@ $('#groupSeg').addEventListener('click', guard(async (e) => {
 
 // ---------- Impresión ----------
 const SETTINGS_KEY = 'liuvi.print';
+new Image().src = '/img/logo-tinta.png'; // precarga para el ticket
 const settings = (() => {
   const d = { name: '', info: '', paper: 'a4', pageSize: 'A4', footer: '¡Gracias por su compra!', auto: false, lblFormat: 'sheet', lblPreset: '60x35', lblW: 60, lblH: 35, lblMargin: 8, lblSkip: 0 };
   try { return { ...d, ...JSON.parse(localStorage.getItem(SETTINGS_KEY)) }; } catch { return d; }
@@ -334,9 +335,10 @@ const saveSettings = () => { try { localStorage.setItem(SETTINGS_KEY, JSON.strin
 let lastTicket = null;
 
 // Imprime `html` solo (el resto de la página se oculta con CSS) con el tamaño de página indicado.
-function printHtml(html, pageCss) {
+async function printHtml(html, pageCss) {
   const area = $('#printArea');
   area.innerHTML = html;
+  await Promise.all([...area.querySelectorAll('img')].map((i) => i.decode().catch(() => {}))); // el logo tiene que estar cargado al imprimir
   let st = $('#pageStyle');
   if (!st) { st = document.createElement('style'); st.id = 'pageStyle'; document.head.append(st); }
   st.textContent = `@page{${pageCss}}`;
@@ -353,7 +355,8 @@ function ticketHtml(s) {
     ? row('Efectivo recibido', money(p.amount + s.change)) + row('Vuelto', money(s.change))
     : row(p.method[0].toUpperCase() + p.method.slice(1), money(p.amount)))).join('');
   return `<div class="ticket" style="width:${w}">
-    <div class="c b" style="font-size:15px">${esc(settings.name || 'Ticket de venta')}</div>
+    <img class="logo" src="/img/logo-tinta.png" alt="Liu Vi" style="width:${w === '48mm' ? '30mm' : '40mm'}">
+    ${settings.name ? `<div class="c b" style="font-size:14px">${esc(settings.name)}</div>` : ''}
     ${settings.info ? `<div class="c">${esc(settings.info)}</div>` : ''}
     <div class="c">${esc((s.created_at || '').slice(0, 16).replace('T', ' '))} · Ticket #${s.id}</div>
     ${s.seller ? `<div class="c">Atendió: ${esc(s.seller)}</div>` : ''}
