@@ -14,6 +14,17 @@ export function looksTemporary(p = APP_DIR, tmp = tmpdir()) {
   return n(p).startsWith(n(tmp).replace(/\/$/, '') + '/') || /\/temp\//.test(n(p)) || /\.zip(\/|$)/.test(n(p));
 }
 
+export const getSetting = (db, key, def = '') => db.prepare('SELECT value FROM settings WHERE key=?').get(key)?.value ?? def;
+export const setSetting = (db, key, value) => db.prepare('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, String(value));
+
+// Al abrir el programa se pide iniciar sesión de nuevo (salvo que un administrador lo desactive):
+// se cierran las sesiones que quedaron de la vez anterior.
+export function clearSessionsIfRequired(db) {
+  if (getSetting(db, 'login_on_start', '1') === '0') return false;
+  db.exec('DELETE FROM user_sessions');
+  return true;
+}
+
 // Resumen de lo guardado, para mostrarlo al iniciar y comprobar que los datos se conservan.
 export function dataSummary(db) {
   const n = (t) => db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get().n;
@@ -126,6 +137,11 @@ export function openDb(path = defaultDbPath()) {
       name TEXT NOT NULL UNIQUE COLLATE NOCASE
     );
 
+    CREATE TABLE IF NOT EXISTS settings (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS roles (
       id          INTEGER PRIMARY KEY,
       name        TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -164,6 +180,9 @@ export function openDb(path = defaultDbPath()) {
   ensureColumn('stock_movements', 'user_id');
   ensureColumn('cash_sessions', 'opened_by');
   ensureColumn('cash_sessions', 'closed_by');
+  ensureColumn('users', 'pin_hash', 'TEXT');                       // PIN de acceso rápido (cifrado)
+  ensureColumn('user_sessions', 'locked', 'INTEGER DEFAULT 0');    // sesión bloqueada (pantalla de bloqueo)
+  ensureColumn('user_sessions', 'last_seen', 'TEXT');              // última actividad, para el bloqueo por inactividad
   ensureColumn('articles', 'brand_id');
   ensureColumn('sale_items', 'brand', 'TEXT'); // marca al momento de vender, para las estadísticas por marca
 

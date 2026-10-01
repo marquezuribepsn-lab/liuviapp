@@ -78,10 +78,13 @@ test('E2E: el usuario sobrevive a un corte brusco y a abrir el programa desde OT
     assert.match(a.out(), /Datos guardados: ninguno todavía/);
     const setup = await fetch(a.base + '/api/auth/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'marina', name: 'Marina', password: 'clave-segura-1' }) });
     assert.equal(setup.status, 201);
+    const cookie = setup.headers.get('set-cookie').split(';')[0];
+    assert.equal((await (await fetch(a.base + '/api/auth/me', { headers: { Cookie: cookie } })).json()).user.username, 'marina', 'con sesión abierta entra directo');
     await a.kill('SIGKILL'); // como cerrar la ventana negra de golpe
 
     const b = await runServer(p1, env);
     assert.equal(await b.me(), false, 'misma carpeta, tras corte brusco: el usuario sigue');
+    assert.equal((await (await fetch(b.base + '/api/auth/me', { headers: { Cookie: cookie } })).json()).user, null, 'al abrir el programa hay que iniciar sesión de nuevo');
     assert.match(b.out(), /Datos guardados: 1 usuario\(s\)/, 'la ventana muestra que encontró los datos');
     assert.match(b.out(), /Liu Vi v\d+\.\d+\.\d+/);
     await b.kill();

@@ -7,8 +7,8 @@ const time = (s) => s.slice(11, 16);
 async function api(method, path, body) {
   const res = await fetch('/api' + path, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
   const data = await res.json().catch(() => null);
-  if (res.status === 401 && !path.startsWith('/auth/')) showLogin();
-  if (!res.ok) throw new Error(data?.error || 'Error de servidor');
+  if (res.status === 401 && !path.startsWith('/auth/')) { if (data?.locked) showLock(); else showLogin(); }
+  if (!res.ok) { const err = new Error(data?.error || 'Error de servidor'); err.locked = !!data?.locked; throw err; }
   return data;
 }
 let toastTimer;
@@ -505,7 +505,7 @@ let permCatalog = [], rolesCache = [], usersCache = [];
 async function loadUsers() {
   [usersCache, rolesCache] = await Promise.all([api('GET', '/users'), api('GET', '/roles')]);
   $('#userTable tbody').innerHTML = usersCache.map((u) => `<tr style="${u.active ? '' : 'opacity:.55'}"><td>${esc(u.username)}</td><td>${esc(u.name)}</td><td><span class="tag">${esc(u.role_name)}</span></td>
-    <td>${u.active ? 'Activo' : 'Inactivo'}</td><td><button class="link" data-uedit="${u.id}">Editar</button></td></tr>`).join('');
+    <td>${u.active ? 'Activo' : 'Inactivo'}${u.has_pin ? ' · con PIN' : ''}</td><td><button class="link" data-uedit="${u.id}">Editar</button></td></tr>`).join('');
   renderRoles();
 }
 const permChecks = (checked, disabled, prefix) => {
@@ -552,6 +552,7 @@ function openUserDialog(u) {
   f.elements.password.required = !u;
   $('#userPwLabel').firstChild.textContent = u ? 'Nueva contraseña (dejá vacío para no cambiarla) ' : 'Contraseña (mínimo 8 caracteres) ';
   $('#userActiveBox').hidden = !u;
+  $('#userClearPinBox').hidden = !(u && u.has_pin);
   if (u) { f.elements.username.value = u.username; f.elements.name.value = u.name; f.elements.role_id.value = u.role_id; f.elements.active.checked = !!u.active; }
   $('#userDialog').showModal();
 }
@@ -562,7 +563,7 @@ $('#userForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const f = e.target.elements;
   try {
-    if (editingUser) await api('PUT', '/users/' + editingUser.id, { name: f.name.value, role_id: Number(f.role_id.value), active: f.active.checked, ...(f.password.value && { password: f.password.value }) });
+    if (editingUser) await api('PUT', '/users/' + editingUser.id, { name: f.name.value, role_id: Number(f.role_id.value), active: f.active.checked, clear_pin: f.clear_pin.checked, ...(f.password.value && { password: f.password.value }) });
     else await api('POST', '/users', { username: f.username.value, name: f.name.value, role_id: Number(f.role_id.value), password: f.password.value });
     $('#userDialog').close(); toast('Usuario guardado'); await loadUsers();
   } catch (err) { $('#userError').textContent = err.message; }
@@ -593,35 +594,122 @@ $('#bkRun').addEventListener('click', async () => {
   } catch (err) { $('#bkError').textContent = err.message; }
 });
 
-// ---------- Sesión ----------
-function showLogin(setup = false) {
+// ---------- Sesión: acceso, bloqueo, perfil y seguridad ----------
+let appReady = false;
+const remember = (k, v) => { try { localStorage.setItem(k, v); } catch { /* sin almacenamiento */ } };
+const recall = (k) => { try { return localStorage.getItem(k) || ''; } catch { return ''; } };
+function showOverlay(which) {
+  document.querySelectorAll('dialog[open]').forEach((d) => d.close()); // los diálogos quedarían por encima de la pantalla de acceso
   document.body.classList.add('locked');
-  $('#login').hidden = false; $('#loginForm').hidden = setup; $('#setupForm').hidden = !setup;
-  (setup ? $('#setupForm') : $('#loginForm')).elements.username.focus();
+  $('#login').hidden = false;
+  $('#loginForm').hidden = which !== 'login'; $('#setupForm').hidden = which !== 'setup'; $('#unlockForm').hidden = which !== 'unlock';
 }
+function showLogin(setup = false) {
+  showOverlay(setup ? 'setup' : 'login');
+  const f = setup ? $('#setupForm') : $('#loginForm');
+  const last = recall('liuvi.lastUser');
+  if (!setup && last) { f.elements.username.value = last; f.elements.password.focus(); } else f.elements.username.focus();
+}
+function showLock(name = me?.user?.name || '') {
+  showOverlay('unlock');
+  $('#unlockWho').textContent = name ? `Sesión de ${name}. Escribí tu PIN o tu contraseña para seguir.` : 'Escribí tu PIN o tu contraseña para seguir.';
+  $('#unlockError').textContent = '';
+  const f = $('#unlockForm'); f.elements.secret.value = ''; f.elements.secret.focus();
+}
+function hideOverlay() { $('#login').hidden = true; document.body.classList.remove('locked'); lastActivity = Date.now(); }
+
 $('#loginForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const f = e.target.elements; $('#loginError').textContent = '';
-  try { await api('POST', '/auth/login', { username: f.username.value, password: f.password.value }); location.reload(); }
+  try { await api('POST', '/auth/login', { username: f.username.value, password: f.password.value }); remember('liuvi.lastUser', f.username.value.trim()); location.reload(); }
   catch (err) { $('#loginError').textContent = err.message; f.password.value = ''; f.password.focus(); }
 });
 $('#setupForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const f = e.target.elements; $('#setupError').textContent = '';
   if (f.password.value !== f.password2.value) { $('#setupError').textContent = 'Las contraseñas no coinciden'; return; }
-  try { await api('POST', '/auth/setup', { name: f.name.value, username: f.username.value, password: f.password.value }); location.reload(); }
+  try { await api('POST', '/auth/setup', { name: f.name.value, username: f.username.value, password: f.password.value }); remember('liuvi.lastUser', f.username.value.trim()); location.reload(); }
   catch (err) { $('#setupError').textContent = err.message; }
 });
+$('#unlockForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target.elements; $('#unlockError').textContent = '';
+  try {
+    await api('POST', '/auth/unlock', { secret: f.secret.value });
+    f.secret.value = '';
+    if (!appReady) return location.reload(); // la página se abrió ya bloqueada: falta arrancar la pantalla
+    hideOverlay(); guard(loaders[currentTab])(); // se sigue donde se estaba (la venta en curso no se pierde)
+  } catch (err) { $('#unlockError').textContent = err.message; f.secret.value = ''; f.secret.focus(); }
+});
+$('#unlockOther').addEventListener('click', async () => { await api('POST', '/auth/logout', {}).catch(() => {}); location.reload(); });
 $('#logoutBtn').addEventListener('click', async () => { await api('POST', '/auth/logout', {}).catch(() => {}); location.reload(); });
-$('#pwBtn').addEventListener('click', () => { $('#pwForm').reset(); $('#pwError').textContent = ''; $('#pwDialog').showModal(); });
-$('#pwCancel').addEventListener('click', () => $('#pwDialog').close());
+async function lockNow() { await api('POST', '/auth/lock', {}).catch(() => {}); showLock(); }
+$('#lockBtn').addEventListener('click', lockNow);
+$('#profileLock').addEventListener('click', lockNow);
+
+// Perfil y seguridad: se abre al hacer clic en el nombre de arriba.
+const setMsg = (id, text, ok = false) => { const el = $('#' + id); el.textContent = text; el.className = 'msg ' + (text ? (ok ? 'ok' : 'err') : ''); };
+function renderPinStatus() {
+  const has = !!me.user.hasPin;
+  $('#pinStatus').textContent = has
+    ? 'Tenés un PIN. Podés usarlo en lugar de la contraseña para entrar y para desbloquear (solo desde esta computadora). Para cambiarlo, guardá uno nuevo.'
+    : 'Todavía no tenés PIN. Con uno de 4 a 8 números entrás y desbloqueás más rápido, como en Windows.';
+  $('#pinRemove').hidden = !has;
+  $('#pinSave').textContent = has ? 'Cambiar PIN' : 'Guardar PIN';
+}
+$('#profileBtn').addEventListener('click', guard(async () => {
+  $('#profileInfo').textContent = `${me.user.name} · usuario «${me.user.username}» · ${me.user.role}`;
+  for (const id of ['pwForm', 'pinForm']) $('#' + id).reset();
+  for (const id of ['pwMsg', 'pinMsg', 'secMsg']) setMsg(id, '');
+  renderPinStatus();
+  const admin = can('usuarios.admin');
+  $('#secAdmin').hidden = !admin;
+  if (admin) { const sec = await api('GET', '/security'); $('#secLoginOnStart').checked = sec.loginOnStart; $('#secIdle').value = String(sec.idleLockMinutes); }
+  $('#profileDialog').showModal();
+}));
+$('#profileClose').addEventListener('click', () => $('#profileDialog').close());
 $('#pwForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const f = e.target.elements;
-  if (f.next.value !== f.next2.value) { $('#pwError').textContent = 'Las contraseñas nuevas no coinciden'; return; }
-  try { await api('POST', '/auth/password', { current: f.current.value, next: f.next.value }); $('#pwDialog').close(); toast('Contraseña cambiada'); }
-  catch (err) { $('#pwError').textContent = err.message; }
+  if (f.next.value !== f.next2.value) return setMsg('pwMsg', 'Las contraseñas nuevas no coinciden');
+  try { await api('POST', '/auth/password', { current: f.current.value, next: f.next.value }); e.target.reset(); setMsg('pwMsg', 'Contraseña cambiada. Las demás sesiones abiertas se cerraron.', true); }
+  catch (err) { setMsg('pwMsg', err.message); }
 });
+$('#pinForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target.elements;
+  if (f.pin.value !== f.pin2.value) return setMsg('pinMsg', 'Los PIN no coinciden');
+  try { await api('POST', '/auth/pin', { current: f.current.value, pin: f.pin.value }); me.user.hasPin = true; e.target.reset(); renderPinStatus(); setMsg('pinMsg', 'PIN guardado. Ya podés usarlo para entrar y desbloquear.', true); }
+  catch (err) { setMsg('pinMsg', err.message); }
+});
+$('#pinRemove').addEventListener('click', async () => {
+  const f = $('#pinForm').elements;
+  if (!f.current.value) return setMsg('pinMsg', 'Escribí tu contraseña actual para quitar el PIN');
+  try { await api('POST', '/auth/pin/remove', { current: f.current.value }); me.user.hasPin = false; $('#pinForm').reset(); renderPinStatus(); setMsg('pinMsg', 'PIN quitado.', true); }
+  catch (err) { setMsg('pinMsg', err.message); }
+});
+$('#secForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    const sec = await api('PUT', '/security', { loginOnStart: $('#secLoginOnStart').checked, idleLockMinutes: Number($('#secIdle').value) });
+    me.security = sec; startIdleWatch(); setMsg('secMsg', 'Seguridad guardada.', true);
+  } catch (err) { setMsg('secMsg', err.message); }
+});
+
+// Bloqueo automático por inactividad: el navegador cuenta la actividad (mouse, teclado, lector) y avisa al servidor.
+let lastActivity = Date.now(), lastPing = 0, idleTimer = null;
+['mousemove', 'mousedown', 'keydown', 'touchstart', 'wheel'].forEach((ev) => document.addEventListener(ev, () => { lastActivity = Date.now(); }, { passive: true }));
+function startIdleWatch() {
+  clearInterval(idleTimer);
+  const min = me?.security?.idleLockMinutes || 0;
+  if (!min) return;
+  idleTimer = setInterval(async () => {
+    if (!$('#login').hidden) return; // ya está bloqueado
+    const idle = Date.now() - lastActivity;
+    if (idle >= min * 60_000) return lockNow();
+    if (idle < 60_000 && Date.now() - lastPing > 60_000) { lastPing = Date.now(); api('POST', '/auth/ping', {}).catch((e) => { if (e.locked) showLock(); }); }
+  }, 15_000);
+}
 
 // ---------- Inicio ----------
 async function boot() {
@@ -629,9 +717,11 @@ async function boot() {
   permCatalog = me.permissions;
   $('#verInfo').textContent = `Liu Vi v${me.version}`;
   if (me.setupNeeded && me.dbFile) $('#setupDb').textContent = `No hay ningún usuario en esta base de datos (${me.dbFile}). Si ya habías creado usuarios, es posible que estés abriendo una versión vieja o otra copia del programa.`;
+  if (me.locked) return showLock(me.lockedName); // la sesión sigue abierta pero bloqueada
   if (!me.user) return showLogin(me.setupNeeded);
   $('#login').hidden = true; document.body.classList.remove('locked');
   $('#userName').textContent = me.user.name; $('#userRole').textContent = `(${me.user.role})`;
+  appReady = true; startIdleWatch();
   document.body.classList.toggle('nocost', !can('costos.ver'));
   $('#adjCard').hidden = !can('stock.ajustar');
   $('#artNew').hidden = !can('articulos.editar');

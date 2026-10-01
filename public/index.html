@@ -14,7 +14,7 @@
   <form id="loginForm" class="card">
     <h2>Iniciá sesión</h2>
     <label>Usuario <input name="username" autocomplete="username" required></label>
-    <label>Contraseña <input name="password" type="password" autocomplete="current-password" required></label>
+    <label>Contraseña o PIN <input name="password" type="password" autocomplete="current-password" required></label>
     <div id="loginError" class="neg"></div>
     <button class="primary" style="width:100%">Entrar</button>
   </form>
@@ -28,6 +28,14 @@
     <div id="setupError" class="neg"></div>
     <button class="primary" style="width:100%">Crear administrador</button>
     <p class="muted" id="setupDb" style="margin:12px 0 0"></p>
+  </form>
+  <form id="unlockForm" class="card" hidden>
+    <h2>Sesión bloqueada</h2>
+    <p class="muted" id="unlockWho"></p>
+    <label>PIN o contraseña <input name="secret" type="password" autocomplete="current-password" required></label>
+    <div id="unlockError" class="neg"></div>
+    <button class="primary" style="width:100%">Desbloquear</button>
+    <p style="margin:12px 0 0;text-align:center"><button type="button" id="unlockOther" class="link">Entrar con otro usuario</button></p>
   </form>
   <p id="verInfo" class="verInfo"></p>
 </div>
@@ -43,8 +51,8 @@
     <button data-tab="copias">Copias</button>
   </nav>
   <span id="cashBadge" class="badge"></span>
-  <span id="userBox"><b id="userName"></b> <span id="userRole" class="muted"></span>
-    <button id="pwBtn" class="link">Contraseña</button><button id="logoutBtn" class="link">Salir</button></span>
+  <span id="userBox"><button id="profileBtn" class="profileBtn" title="Mi perfil y seguridad (contraseña, PIN)"><b id="userName"></b> <span id="userRole" class="muted"></span></button>
+    <button id="lockBtn" class="link">Bloquear</button><button id="logoutBtn" class="link">Salir</button></span>
 </header>
 <div id="toast"></div>
 <main>
@@ -262,6 +270,7 @@
       <label>Rol <select name="role_id"></select></label>
       <label id="userPwLabel">Contraseña <input name="password" type="password" autocomplete="new-password" minlength="8"></label>
       <label class="inline" id="userActiveBox"><input type="checkbox" name="active" checked> Usuario activo</label>
+      <label class="inline" id="userClearPinBox" hidden><input type="checkbox" name="clear_pin"> Quitar el PIN de este usuario (si lo olvidó)</label>
       <div id="userError" class="neg"></div>
       <div class="row end"><button type="button" id="userCancel" class="ghost">Cancelar</button><button class="primary">Guardar</button></div>
     </form>
@@ -301,15 +310,54 @@
 </section>
 
 </main>
-<dialog id="pwDialog">
-  <form id="pwForm" method="dialog">
-    <h2>Cambiar contraseña</h2>
-    <label>Contraseña actual <input name="current" type="password" autocomplete="current-password" required></label>
-    <label>Nueva contraseña (mínimo 8 caracteres) <input name="next" type="password" autocomplete="new-password" required minlength="8"></label>
-    <label>Repetir nueva contraseña <input name="next2" type="password" autocomplete="new-password" required minlength="8"></label>
-    <div id="pwError" class="neg"></div>
-    <div class="row end"><button type="button" id="pwCancel" class="ghost">Cancelar</button><button class="primary">Cambiar</button></div>
-  </form>
+<dialog id="profileDialog" class="wide">
+  <h2>Mi perfil y seguridad</h2>
+  <p class="muted" id="profileInfo"></p>
+
+  <div class="psec">
+    <h3>Contraseña</h3>
+    <form id="pwForm" method="dialog">
+      <label>Contraseña actual <input name="current" type="password" autocomplete="current-password" required></label>
+      <div class="grid2">
+        <label>Nueva contraseña (mín. 8 caracteres) <input name="next" type="password" autocomplete="new-password" required minlength="8"></label>
+        <label>Repetir nueva contraseña <input name="next2" type="password" autocomplete="new-password" required minlength="8"></label>
+      </div>
+      <div class="msg" id="pwMsg"></div>
+      <button class="primary">Cambiar contraseña</button>
+    </form>
+  </div>
+
+  <div class="psec">
+    <h3>PIN de acceso rápido</h3>
+    <p class="muted" id="pinStatus"></p>
+    <form id="pinForm" method="dialog">
+      <div class="grid2">
+        <label>PIN (4 a 8 números) <input name="pin" type="password" inputmode="numeric" pattern="[0-9]{4,8}" maxlength="8" autocomplete="new-password" required></label>
+        <label>Repetir PIN <input name="pin2" type="password" inputmode="numeric" pattern="[0-9]{4,8}" maxlength="8" autocomplete="new-password" required></label>
+      </div>
+      <label>Tu contraseña actual (para confirmar) <input name="current" type="password" autocomplete="current-password" required></label>
+      <div class="msg" id="pinMsg"></div>
+      <div class="row"><button class="primary" id="pinSave">Guardar PIN</button><button type="button" class="ghost" id="pinRemove" hidden>Quitar PIN</button></div>
+    </form>
+  </div>
+
+  <div class="psec" id="secAdmin" hidden>
+    <h3>Seguridad del programa <span class="tag">administrador</span></h3>
+    <form id="secForm" method="dialog">
+      <label class="inline"><input type="checkbox" id="secLoginOnStart"> Pedir inicio de sesión cada vez que se abre el programa</label>
+      <label>Bloquear la pantalla por inactividad
+        <select id="secIdle">
+          <option value="0">Nunca</option><option value="1">1 minuto</option><option value="2">2 minutos</option><option value="5">5 minutos</option>
+          <option value="10">10 minutos</option><option value="15">15 minutos</option><option value="30">30 minutos</option><option value="60">1 hora</option>
+        </select>
+      </label>
+      <p class="muted">Vale para todos los usuarios. «Pedir inicio de sesión al abrir» se aplica la próxima vez que se abra el programa. Cada usuario se desbloquea con su PIN o su contraseña.</p>
+      <div class="msg" id="secMsg"></div>
+      <button class="primary">Guardar seguridad</button>
+    </form>
+  </div>
+
+  <div class="row end psec"><button type="button" id="profileLock" class="ghost">Bloquear ahora</button><button type="button" id="profileClose" class="primary">Cerrar</button></div>
 </dialog>
 <div id="printArea"></div>
 <script src="/barcode.js"></script>
