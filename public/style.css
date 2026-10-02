@@ -167,3 +167,9 @@ body.locked>footer{display:none}
 .comp .ct{text-align:right;margin-top:8px}.comp .tot{font-size:18px;font-weight:700}.comp .cpay{color:#333;margin-top:2px}
 .comp .cf{text-align:center;margin-top:10px;font-size:11px}
 .comp .stamp{position:absolute;top:40%;left:20%;font-size:60px;font-weight:700;color:#c00;opacity:.25;transform:rotate(-20deg);border:6px solid #c00;padding:0 20px}
+.grow{flex:1}
+.custChip{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--soft);border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin:6px 0}
+.custChip b{font-size:15px}
+#custResults{margin:4px 0}
+#custResults .item{padding:7px 10px;font-size:14px}
+.pay label[hidden]{display:none}

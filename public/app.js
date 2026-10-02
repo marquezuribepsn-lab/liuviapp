@@ -27,8 +27,8 @@ const articleLabel = (a) => [a.brand, a.name, a.size && `Talle ${a.size}`, a.col
 
 // ---------- Pestañas ----------
 let currentTab = 'venta';
-const loaders = { venta: loadCash, etiquetas: loadPrintTab, articulos: loadArticles, stock: loadStock, stats: loadStats, usuarios: loadUsers, copias: loadBackup };
-const TAB_PERMS = { venta: ['ventas.cobrar', 'caja.ver', 'caja.operar'], articulos: ['articulos.ver'], etiquetas: ['articulos.ver'], stock: ['stock.ver'], stats: ['estadisticas.ver'], usuarios: ['usuarios.admin'], copias: ['sistema.copias'] };
+const loaders = { venta: loadCash, clientes: loadCustomers, etiquetas: loadPrintTab, articulos: loadArticles, stock: loadStock, stats: loadStats, usuarios: loadUsers, copias: loadBackup };
+const TAB_PERMS = { venta: ['ventas.cobrar', 'caja.ver', 'caja.operar'], clientes: ['clientes.ver'], articulos: ['articulos.ver'], etiquetas: ['articulos.ver'], stock: ['stock.ver'], stats: ['estadisticas.ver'], usuarios: ['usuarios.admin'], copias: ['sistema.copias'] };
 function showTab(name) {
   currentTab = name;
   $$('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
@@ -76,9 +76,10 @@ function renderCart() {
 function paymentsEntered() {
   return ['Efectivo', 'Tarjeta', 'Transferencia'].map((m) => ({ method: m.toLowerCase(), amount: Number($('#pay' + m).value) || 0 })).filter((p) => p.amount > 0);
 }
+const accountEntered = () => (saleCustomer?.id ? Number($('#payCuenta').value) || 0 : 0);
 function updateChange() {
   const { total } = cartTotals();
-  const paid = paymentsEntered().reduce((s, p) => s + p.amount, 0);
+  const paid = paymentsEntered().reduce((s, p) => s + p.amount, 0) + accountEntered();
   const diff = Math.round((paid - total) * 100) / 100;
   $('#change').textContent = !cart.length ? '' : diff >= 0 ? `Vuelto: ${money(diff)}` : `Falta cobrar: ${money(-diff)}`;
 }
@@ -112,14 +113,65 @@ $('#cart').addEventListener('click', (e) => {
   } else if (rm !== undefined) { cart.splice(Number(rm), 1); renderCart(); }
 });
 $('#discount').addEventListener('input', renderCart);
-['Efectivo', 'Tarjeta', 'Transferencia'].forEach((m) => $('#pay' + m).addEventListener('input', updateChange));
+['Efectivo', 'Tarjeta', 'Transferencia', 'Cuenta'].forEach((m) => $('#pay' + m).addEventListener('input', updateChange));
 $$('[data-full]').forEach((b) => b.addEventListener('click', () => {
   ['Efectivo', 'Tarjeta', 'Transferencia'].forEach((m) => ($('#pay' + m).value = ''));
-  $('#pay' + b.dataset.full).value = cartTotals().total || '';
+  $('#pay' + b.dataset.full).value = Math.max(0, Math.round((cartTotals().total - accountEntered()) * 100) / 100) || '';
   updateChange();
 }));
+$('#useCredit').addEventListener('click', () => {
+  $('#payCuenta').value = Math.min(saleCustomer?.balance || 0, cartTotals().total) || '';
+  updateChange();
+});
+
+// Cliente de la venta: con ficha (cuenta corriente, historial) o solo un nombre para el comprobante.
+let saleCustomer = null; // { id, name, doc, balance } | { name } | null
+const balanceHtml = (b) => (b > 0 ? `<span class="pos">${money(b)} a favor</span>` : b < 0 ? `<span class="neg">Debe ${money(-b)}</span>` : '<span class="muted">Sin saldo</span>');
+function renderCustomerChip() {
+  const c = saleCustomer, chip = $('#custChip');
+  $('#custSearch').closest('label').hidden = !!c;
+  chip.hidden = !c; $('#custResults').innerHTML = '';
+  $('#payCuentaWrap').hidden = !c?.id;
+  $('#useCredit').hidden = !(c?.id && c.balance > 0);
+  if (!c?.id) $('#payCuenta').value = '';
+  if (c) chip.innerHTML = `<span>👤 <b>${esc(c.name)}</b>${c.doc ? ` · ${esc(c.doc)}` : ''}</span>${c.id ? balanceHtml(c.balance) : '<span class="muted">(sin ficha)</span>'}
+    <span class="grow"></span>${c.id && can('clientes.cuenta') ? '<button type="button" class="ghost" id="custSena">Cargar seña</button>' : ''}<button type="button" class="link" id="custClear" title="Quitar cliente">✕</button>`;
+  updateChange();
+}
+function setSaleCustomer(c) { saleCustomer = c; renderCustomerChip(); $('#scan').focus(); }
+const custSearch = debounce(guard(async () => {
+  const q = $('#custSearch').value.trim();
+  if (!q) { $('#custResults').innerHTML = ''; return; }
+  const list = await api('GET', '/customers?q=' + encodeURIComponent(q) + '&limit=6');
+  window._custHits = list;
+  $('#custResults').innerHTML = list.map((c) => `<div class="item" data-cid="${c.id}"><span>${esc(c.name)}${c.doc ? ` · ${esc(c.doc)}` : ''}${c.phone ? ` · ${esc(c.phone)}` : ''}</span><span>${balanceHtml(c.balance)}</span></div>`).join('')
+    + (can('clientes.editar') ? `<div class="item" data-cnew="1"><span>＋ Crear cliente «${esc(q)}»</span></div>` : '')
+    + `<div class="item" data-cfree="1"><span>Usar «${esc(q)}» solo en el comprobante (sin ficha)</span></div>`;
+}));
+$('#custSearch').addEventListener('input', custSearch);
+$('#custSearch').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault(); e.stopPropagation();
+  const first = $('#custResults .item'); if (first) first.click();
+});
+$('#custBox').addEventListener('click', guard(async (e) => {
+  const item = e.target.closest('.item');
+  if (e.target.id === 'custClear') return setSaleCustomer(null);
+  if (e.target.id === 'custSena') return openPayDialog({ mode: 'sena', customer: saleCustomer, done: refreshSaleCustomer });
+  if (!item) return;
+  const q = $('#custSearch').value.trim();
+  if (item.dataset.cid) { const c = window._custHits.find((x) => x.id == item.dataset.cid); setSaleCustomer({ id: c.id, name: c.name, doc: c.doc, balance: c.balance }); }
+  else if (item.dataset.cfree) setSaleCustomer({ name: q });
+  else if (item.dataset.cnew) openCustomerDialog(null, { name: q }, (c) => setSaleCustomer({ id: c.id, name: c.name, doc: c.doc, balance: 0 }));
+}));
+async function refreshSaleCustomer() {
+  if (!saleCustomer?.id) return;
+  const list = await api('GET', '/customers?q=' + encodeURIComponent(saleCustomer.doc || saleCustomer.name) + '&limit=20');
+  const c = list.find((x) => x.id === saleCustomer.id);
+  if (c) { saleCustomer.balance = c.balance; renderCustomerChip(); }
+}
 function resetSale() {
-  cart = []; $('#discount').value = 0; $('#custName').value = ''; $('#custDoc').value = '';
+  cart = []; $('#discount').value = 0; saleCustomer = null; renderCustomerChip();
   ['Efectivo', 'Tarjeta', 'Transferencia'].forEach((m) => ($('#pay' + m).value = ''));
   renderCart(); $('#results').innerHTML = ''; $('#scan').value = ''; $('#scan').focus();
 }
@@ -179,14 +231,104 @@ $('#charge').addEventListener('click', guard(async () => {
   if (!cash) throw new Error('Abrí la caja antes de vender');
   const payments = paymentsEntered();
   const { total } = cartTotals();
-  if (!payments.length) payments.push({ method: 'efectivo', amount: total }); // por defecto: efectivo exacto
-  const sale = await api('POST', '/sales', { items: cart.map((l) => ({ article_id: l.a.id, qty: l.qty })), discount_pct: Number($('#discount').value) || 0, payments, customer_name: $('#custName').value, customer_doc: $('#custDoc').value });
+  if (!payments.length && !accountEntered()) payments.push({ method: 'efectivo', amount: total }); // por defecto: efectivo exacto
+  const sale = await api('POST', '/sales', { items: cart.map((l) => ({ article_id: l.a.id, qty: l.qty })), discount_pct: Number($('#discount').value) || 0, payments, account_amount: accountEntered() || undefined, customer_id: saleCustomer?.id, customer_name: saleCustomer?.id ? undefined : saleCustomer?.name });
   toast(`Venta #${sale.id} registrada${sale.change ? ` · Vuelto ${money(sale.change)}` : ''}`);
   resetSale(); await loadCash();
   const full = (await api('GET', '/sales')).find((x) => x.id === sale.id);
   lastTicket = { ...full, change: sale.change };
   if ($('#autoTicket').checked && full) printTicket(lastTicket);
 }));
+
+// ---------- Clientes ----------
+async function loadCustomers() {
+  const q = encodeURIComponent($('#cliSearch').value.trim());
+  let rows = await api('GET', `/customers?q=${q}&limit=500${$('#cliAll').checked ? '&all=1' : ''}`);
+  if ($('#cliDebt').checked) rows = rows.filter((c) => c.balance !== 0);
+  $('#cliTable tbody').innerHTML = rows.map((c) => `<tr data-cid="${c.id}" style="cursor:pointer${c.active ? '' : ';opacity:.5'}">
+    <td><b>${esc(c.name)}</b>${c.active ? '' : ' <small>(de baja)</small>'}</td><td>${esc(c.doc || '—')}</td><td>${esc(c.phone || '—')}</td><td>${balanceHtml(c.balance)}</td>
+    <td class="num">${c.sales_count}</td><td class="num">${money(c.sales_total)}</td><td>${esc((c.last_sale || '').slice(0, 10) || '—')}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">Todavía no hay clientes</td></tr>';
+  const owed = rows.filter((c) => c.balance < 0).reduce((s, c) => s - c.balance, 0), credit = rows.filter((c) => c.balance > 0).reduce((s, c) => s + c.balance, 0);
+  $('#cliNote').textContent = `${rows.length} cliente(s)${owed ? ` · Te deben ${money(owed)}` : ''}${credit ? ` · Saldo a favor de clientes ${money(credit)}` : ''}`;
+}
+$('#cliSearch').addEventListener('input', debounce(guard(loadCustomers)));
+$('#cliAll').addEventListener('change', guard(loadCustomers));
+$('#cliDebt').addEventListener('change', guard(loadCustomers));
+$('#cliNew').addEventListener('click', () => openCustomerDialog());
+$('#cliCancel').addEventListener('click', () => $('#cliDialog').close());
+let editingCustomer = null, customerDone = null;
+function openCustomerDialog(c, preset = {}, done = null) {
+  editingCustomer = c?.id ?? null; customerDone = done;
+  const f = $('#cliForm'); f.reset(); $('#cliError').textContent = '';
+  $('#cliTitle').textContent = c ? 'Editar cliente' : 'Nuevo cliente';
+  for (const k of ['name', 'doc', 'phone', 'email', 'note']) f.elements[k].value = c?.[k] ?? preset[k] ?? '';
+  $('#cliDialog').showModal(); f.elements.name.focus();
+}
+$('#cliForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    const body = Object.fromEntries(new FormData(e.target));
+    const saved = editingCustomer ? await api('PUT', '/customers/' + editingCustomer, body) : await api('POST', '/customers', body);
+    $('#cliDialog').close(); toast('Cliente guardado');
+    if (customerDone) customerDone(saved);
+    if (currentTab === 'clientes') { await loadCustomers(); if ($('#cliDetail').open) await openCustomerDetail(saved.id); }
+  } catch (err) { $('#cliError').textContent = err.message; }
+});
+$('#cliTable').addEventListener('click', guard((e) => { const tr = e.target.closest('tr[data-cid]'); if (tr) return openCustomerDetail(tr.dataset.cid); }));
+$('#cdClose').addEventListener('click', () => $('#cliDetail').close());
+async function openCustomerDetail(id) {
+  const c = await api('GET', '/customers/' + id);
+  $('#cdName').textContent = c.name;
+  $('#cdInfo').textContent = [c.doc && `DNI/CUIT ${c.doc}`, c.phone && `Tel. ${c.phone}`, c.email, c.note].filter(Boolean).join(' · ') || 'Sin más datos';
+  $('#cdKpis').innerHTML = [['Cuenta', c.balance > 0 ? `${money(c.balance)} a favor` : c.balance < 0 ? `Debe ${money(-c.balance)}` : 'Sin saldo'], ['Compras', c.sales_count], ['Total comprado', money(c.sales_total)], ['Última compra', (c.last_sale || '—').slice(0, 10)]]
+    .map(([k, v]) => `<div class="kpi"><span>${k}</span><b style="font-size:18px">${v}</b></div>`).join('');
+  const act = [];
+  if (can('clientes.cuenta') && c.active) {
+    act.push(`<button class="primary" data-act="sena">Cargar seña / saldo</button>`);
+    if (c.balance < 0) act.push(`<button class="primary" data-act="deuda">Cobrar deuda</button>`);
+    if (c.balance > 0) act.push(`<button class="ghost" data-act="payout">Devolver saldo</button>`);
+  }
+  if (can('clientes.editar')) act.push(`<button class="ghost" data-act="edit">Editar</button><button class="ghost" data-act="toggle">${c.active ? 'Dar de baja' : 'Reactivar'}</button>`);
+  $('#cdActions').innerHTML = act.join('');
+  $('#cdActions').onclick = guard(async (e) => {
+    const a = e.target.dataset.act; if (!a) return;
+    const done = async () => { await openCustomerDetail(c.id); await loadCustomers(); };
+    if (a === 'edit') return openCustomerDialog(c);
+    if (a === 'toggle') { await api('PUT', '/customers/' + c.id, { active: !c.active }); toast(c.active ? 'Cliente dado de baja' : 'Cliente reactivado'); return done(); }
+    openPayDialog({ mode: a, customer: c, done });
+  });
+  $('#cdMovs tbody').innerHTML = c.movements.map((m) => `<tr><td>${esc(m.created_at.slice(0, 16))}</td><td>${esc(m.concept)}${m.method ? ` <small class="muted">(${esc(m.method)})</small>` : ''}</td>
+    <td class="num ${m.amount > 0 ? 'pos' : 'neg'}">${m.amount > 0 ? '+' : ''}${money(m.amount)}</td><td>${esc(m.user_name || '')}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">Sin movimientos</td></tr>';
+  $('#cdSales tbody').innerHTML = c.sales.map((v) => `<tr style="${v.voided ? 'opacity:.5;text-decoration:line-through' : ''}"><td>${v.id}</td><td>${esc(v.created_at.slice(0, 16))}</td>
+    <td>${v.items.map((i) => `${i.qty}× ${esc(i.name)}`).join('<br>')}</td><td class="num">${money(v.total)}</td><td>${v.voided ? 'Anulada' : ''}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">Todavía no compró</td></tr>';
+  if (!$('#cliDetail').open) $('#cliDetail').showModal();
+}
+// Seña / cobro de deuda / devolución de saldo (mueven la caja y la cuenta del cliente).
+let payCtx = null;
+function openPayDialog({ mode, customer, done }) {
+  if (!cash) return toast('Abrí la caja para registrar el movimiento', true);
+  payCtx = { mode, customer, done };
+  const f = $('#payForm'); f.reset(); $('#payError').textContent = '';
+  const T = {
+    sena: ['Cargar seña o saldo', `Entra a la caja y queda a favor de ${customer.name}: después se descuenta de su compra.`],
+    deuda: ['Cobrar deuda', `${customer.name} debe ${money(-(customer.balance || 0))}.`],
+    payout: ['Devolver saldo a favor', `Sale de la caja. ${customer.name} tiene ${money(customer.balance || 0)} a favor.`],
+  }[mode];
+  $('#payTitle').textContent = T[0]; $('#payHelp').textContent = T[1];
+  if (mode === 'deuda') f.elements.amount.value = -customer.balance;
+  if (mode === 'payout') f.elements.amount.value = customer.balance;
+  $('#payDialog').showModal(); f.elements.amount.focus();
+}
+$('#payCancel').addEventListener('click', () => $('#payDialog').close());
+$('#payForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const { mode, customer, done } = payCtx, f = e.target.elements;
+  try {
+    const path = `/customers/${customer.id}/${mode === 'payout' ? 'payout' : 'payment'}`;
+    await api('POST', path, { amount: Number(f.amount.value), method: f.method.value, concept: { sena: 'Seña / adelanto', deuda: 'Pago de deuda' }[mode] });
+    $('#payDialog').close(); toast('Movimiento registrado'); await refreshCash(); if (done) await done();
+  } catch (err) { $('#payError').textContent = err.message; }
+});
 
 // ---------- Artículos ----------
 async function loadArticles() {
@@ -601,7 +743,7 @@ function ticketHtml(s, copy) {
   const row = (a, b, cls = '') => `<div class="r ${cls}"><span>${a}</span><span>${b}</span></div>`;
   const pays = s.payments.map((p) => (p.method === 'efectivo' && s.change
     ? row('Efectivo recibido', money(p.amount + s.change)) + row('Vuelto', money(s.change))
-    : row(methodName(p.method), money(p.amount)))).join('');
+    : row(methodName(p.method), money(p.amount)))).join('') + (s.account_amount ? row('Cuenta del cliente', money(s.account_amount)) : '');
   return `<div class="ticket" style="width:${w}">
     <img class="logo" src="/img/logo-tinta.png" alt="Liu Vi" style="width:${w === '48mm' ? '30mm' : '40mm'}">
     ${settings.name ? `<div class="c b" style="font-size:14px">${esc(settings.name)}</div>` : ''}
@@ -625,7 +767,8 @@ function ticketHtml(s, copy) {
 
 // Comprobante para hoja A4/Carta. Una copia = una mitad; con pocos artículos entran las dos en la misma hoja.
 function comprobanteHtml(s, copy) {
-  const pay = s.payments.map((p) => `${methodName(p.method)} ${money(p.amount + (p.method === 'efectivo' ? s.change || 0 : 0))}`).join(' · ');
+  const pay = [...s.payments.map((p) => `${methodName(p.method)} ${money(p.amount + (p.method === 'efectivo' ? s.change || 0 : 0))}`),
+    ...(s.account_amount ? [`Cuenta del cliente ${money(s.account_amount)}`] : [])].join(' · ');
   return `<div class="comp">
     ${s.voided ? '<div class="stamp">ANULADA</div>' : ''}
     <div class="ch">

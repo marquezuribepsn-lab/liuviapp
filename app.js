@@ -354,15 +354,100 @@ export function createApp(db, opts = {}) {
   route('GET', '/api/cash/sessions', 'caja.ver', () =>
     db.prepare('SELECT * FROM cash_sessions ORDER BY id DESC LIMIT 60').all().map(sessionSummary));
 
+  // Clientes y cuenta corriente
+  const money = (n) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(n);
+  const customerBalance = (id) => round2(db.prepare('SELECT COALESCE(SUM(amount),0) AS b FROM account_movements WHERE customer_id=?').get(id).b);
+  const CUSTOMER_LIST = `
+    SELECT c.*, COALESCE((SELECT SUM(amount) FROM account_movements WHERE customer_id=c.id),0) AS balance,
+      (SELECT COUNT(*) FROM sales WHERE customer_id=c.id AND voided=0) AS sales_count,
+      COALESCE((SELECT SUM(total) FROM sales WHERE customer_id=c.id AND voided=0),0) AS sales_total,
+      (SELECT MAX(created_at) FROM sales WHERE customer_id=c.id AND voided=0) AS last_sale
+    FROM customers c`;
+  function customerFields(b, cur = {}) {
+    const text = (k, max, label, required = false) => {
+      const v = String(b[k] ?? cur[k] ?? '').trim();
+      if (required && !v) throw bad(`${label} es obligatorio`);
+      if (v.length > max) throw bad(`${label} no puede superar los ${max} caracteres`);
+      return v;
+    };
+    return { name: text('name', 120, 'El nombre', true), doc: text('doc', 30, 'El documento'), phone: text('phone', 40, 'El teléfono'),
+      email: text('email', 120, 'El correo'), note: text('note', 300, 'La nota') };
+  }
+  const dupDoc = (doc, exceptId = 0) => doc && db.prepare("SELECT name FROM customers WHERE doc=? AND active=1 AND id!=?").get(doc, exceptId);
+
+  route('GET', '/api/customers', ['clientes.ver', 'ventas.cobrar'], ({ query }) => {
+    const q = `%${(query.get('q') || '').trim()}%`;
+    const all = query.get('all') === '1';
+    return db.prepare(`${CUSTOMER_LIST} WHERE (? OR c.active=1) AND (c.name LIKE ? OR c.doc LIKE ? OR c.phone LIKE ?)
+      ORDER BY c.name COLLATE NOCASE LIMIT ?`).all(all ? 1 : 0, q, q, q, Math.min(Number(query.get('limit')) || 300, 1000))
+      .map((c) => ({ ...c, balance: round2(c.balance) }));
+  });
+  route('GET', '/api/customers/:id', 'clientes.ver', ({ params }) => {
+    const c = db.prepare(`${CUSTOMER_LIST} WHERE c.id=?`).get(params.id);
+    if (!c) throw new HttpError(404, 'Cliente no encontrado');
+    const movements = db.prepare(`SELECT m.*, u.name AS user_name FROM account_movements m LEFT JOIN users u ON u.id=m.user_id
+      WHERE m.customer_id=? ORDER BY m.id DESC LIMIT 100`).all(c.id);
+    const sales = db.prepare(`SELECT s.id, s.created_at, s.total, s.voided, s.account_amount FROM sales s WHERE s.customer_id=? ORDER BY s.id DESC LIMIT 50`).all(c.id)
+      .map((s) => ({ ...s, items: db.prepare('SELECT name,qty,price FROM sale_items WHERE sale_id=?').all(s.id) }));
+    return { ...c, balance: round2(c.balance), movements, sales };
+  });
+  route('POST', '/api/customers', 'clientes.editar', ({ body }) => {
+    const f = customerFields(body);
+    const dup = dupDoc(f.doc);
+    if (dup) throw new HttpError(409, `Ya hay un cliente con ese documento: ${dup.name}`);
+    const { lastInsertRowid: id } = db.prepare('INSERT INTO customers (name,doc,phone,email,note) VALUES (?,?,?,?,?)').run(f.name, f.doc, f.phone, f.email, f.note);
+    return { status: 201, data: db.prepare(`${CUSTOMER_LIST} WHERE c.id=?`).get(id) };
+  });
+  route('PUT', '/api/customers/:id', 'clientes.editar', ({ params, body }) => {
+    const cur = db.prepare('SELECT * FROM customers WHERE id=?').get(params.id);
+    if (!cur) throw new HttpError(404, 'Cliente no encontrado');
+    const f = customerFields(body, cur);
+    const active = body.active === undefined ? cur.active : (body.active ? 1 : 0);
+    if (active) { const dup = dupDoc(f.doc, cur.id); if (dup) throw new HttpError(409, `Ya hay un cliente con ese documento: ${dup.name}`); }
+    db.prepare('UPDATE customers SET name=?,doc=?,phone=?,email=?,note=?,active=? WHERE id=?').run(f.name, f.doc, f.phone, f.email, f.note, active, cur.id);
+    return db.prepare(`${CUSTOMER_LIST} WHERE c.id=?`).get(cur.id);
+  });
+  // Entra plata a la caja y sube el saldo del cliente: una seña o adelanto (queda a favor) o el pago de una deuda.
+  route('POST', '/api/customers/:id/payment', 'clientes.cuenta', ({ body, params, user }) => tx(db, () => {
+    const c = db.prepare('SELECT * FROM customers WHERE id=? AND active=1').get(params.id);
+    if (!c) throw new HttpError(404, 'Cliente no encontrado');
+    const session = requireSession();
+    const amount = round2(num(body.amount, 'Monto'));
+    if (amount <= 0) throw bad('El monto debe ser mayor a 0');
+    const method = body.method || 'efectivo';
+    if (!METHODS.includes(method)) throw bad('Medio de pago inválido');
+    const concept = String(body.concept || 'Pago del cliente').trim().slice(0, 100) || 'Pago del cliente';
+    db.prepare('INSERT INTO account_movements (customer_id,amount,concept,method,user_id) VALUES (?,?,?,?,?)').run(c.id, amount, concept, method, user.id);
+    db.prepare('INSERT INTO cash_movements (session_id,type,method,amount,concept,user_id) VALUES (?,?,?,?,?,?)')
+      .run(session.id, 'ingreso', method, amount, `${concept} · ${c.name}`, user.id);
+    return { status: 201, data: { balance: customerBalance(c.id) } };
+  }));
+  // Se le devuelve plata al cliente de su saldo a favor (sale de la caja).
+  route('POST', '/api/customers/:id/payout', 'clientes.cuenta', ({ body, params, user }) => tx(db, () => {
+    const c = db.prepare('SELECT * FROM customers WHERE id=? AND active=1').get(params.id);
+    if (!c) throw new HttpError(404, 'Cliente no encontrado');
+    const session = requireSession();
+    const amount = round2(num(body.amount, 'Monto'));
+    if (amount <= 0) throw bad('El monto debe ser mayor a 0');
+    if (amount > customerBalance(c.id)) throw bad('El cliente no tiene tanto saldo a favor');
+    const method = body.method || 'efectivo';
+    if (!METHODS.includes(method)) throw bad('Medio de pago inválido');
+    db.prepare('INSERT INTO account_movements (customer_id,amount,concept,method,user_id) VALUES (?,?,?,?,?)').run(c.id, -amount, 'Devolución de saldo', method, user.id);
+    db.prepare('INSERT INTO cash_movements (session_id,type,method,amount,concept,user_id) VALUES (?,?,?,?,?,?)')
+      .run(session.id, 'egreso', method, amount, `Devolución de saldo · ${c.name}`, user.id);
+    return { status: 201, data: { balance: customerBalance(c.id) } };
+  }));
+
   // Ventas
-  route('POST', '/api/sales', 'ventas.cobrar', ({ body, user }) => {
+  route('POST', '/api/sales', 'ventas.cobrar', ({ body, user, can }) => {
     const items = Array.isArray(body.items) ? body.items : [];
     if (!items.length) throw bad('La venta no tiene artículos');
     const payments = (Array.isArray(body.payments) ? body.payments : []).map((p) => {
       if (!METHODS.includes(p.method)) throw bad('Medio de pago inválido');
       return { method: p.method, amount: num(p.amount, 'Monto de pago') };
     }).filter((p) => p.amount > 0);
-    if (!payments.length) throw bad('Indicá el medio de pago');
+    const accountAmount = round2(num(body.account_amount ?? 0, 'Monto de cuenta corriente'));
+    if (!payments.length && accountAmount <= 0) throw bad('Indicá el medio de pago');
     const discountPct = num(body.discount_pct ?? 0, 'Descuento');
     if (discountPct > 100) throw bad('Descuento inválido');
 
@@ -386,7 +471,21 @@ export function createApp(db, opts = {}) {
       const discount = round2(subtotal * discountPct / 100);
       const total = round2(subtotal - discount);
 
-      const paid = round2(payments.reduce((s, p) => s + p.amount, 0));
+      // Cuenta corriente: se descuenta del saldo a favor del cliente; dejarlo debiendo requiere un permiso aparte.
+      let customer = null;
+      if (body.customer_id) {
+        customer = db.prepare('SELECT * FROM customers WHERE id=? AND active=1').get(body.customer_id);
+        if (!customer) throw new HttpError(404, 'Cliente no encontrado');
+      }
+      if (accountAmount > 0) {
+        if (!customer) throw bad('Para usar la cuenta corriente elegí un cliente');
+        if (accountAmount > total) throw bad('El monto de cuenta corriente supera el total de la venta');
+        const balance = customerBalance(customer.id);
+        if (accountAmount > Math.max(balance, 0) && !can('clientes.fiar')) {
+          throw bad(balance > 0 ? `El saldo a favor del cliente es ${money(balance)}` : 'El cliente no tiene saldo a favor');
+        }
+      }
+      const paid = round2(payments.reduce((s, p) => s + p.amount, 0) + accountAmount);
       if (paid < total) throw bad(`Falta cobrar ${round2(total - paid).toFixed(2)}`);
       let change = round2(paid - total);
       if (change > 0) {
@@ -397,11 +496,15 @@ export function createApp(db, opts = {}) {
       }
       const finalPayments = payments.filter((p) => p.amount > 0);
 
-      const customerName = String(body.customer_name ?? '').trim().slice(0, 120);
-      const customerDoc = String(body.customer_doc ?? '').trim().slice(0, 30);
+      const customerName = customer ? customer.name : String(body.customer_name ?? '').trim().slice(0, 120);
+      const customerDoc = customer ? customer.doc : String(body.customer_doc ?? '').trim().slice(0, 30);
       const { lastInsertRowid: saleId } = db.prepare(
-        'INSERT INTO sales (session_id,subtotal,discount,total,user_id,customer_name,customer_doc) VALUES (?,?,?,?,?,?,?)')
-        .run(session.id, subtotal, discount, total, user.id, customerName, customerDoc);
+        'INSERT INTO sales (session_id,subtotal,discount,total,user_id,customer_name,customer_doc,customer_id,account_amount) VALUES (?,?,?,?,?,?,?,?,?)')
+        .run(session.id, subtotal, discount, total, user.id, customerName, customerDoc, customer?.id ?? null, accountAmount);
+      if (accountAmount > 0) {
+        db.prepare('INSERT INTO account_movements (customer_id,amount,concept,sale_id,user_id) VALUES (?,?,?,?,?)')
+          .run(customer.id, -accountAmount, `Venta #${saleId}`, saleId, user.id);
+      }
       for (const { a, qty } of lines) {
         const label = [a.brand, a.name, a.size, a.color].filter(Boolean).join(' · ');
         db.prepare('INSERT INTO sale_items (sale_id,article_id,name,qty,price,cost,brand) VALUES (?,?,?,?,?,?,?)')
@@ -413,7 +516,7 @@ export function createApp(db, opts = {}) {
         db.prepare('INSERT INTO cash_movements (session_id,type,method,amount,concept,sale_id,user_id) VALUES (?,?,?,?,?,?,?)')
           .run(session.id, 'ingreso', p.method, p.amount, `Venta #${saleId}`, saleId, user.id);
       }
-      return { status: 201, data: { id: saleId, subtotal, discount, total, change, payments: finalPayments } };
+      return { status: 201, data: { id: saleId, subtotal, discount, total, change, account_amount: accountAmount, payments: finalPayments } };
     });
   });
 
@@ -435,6 +538,10 @@ export function createApp(db, opts = {}) {
     if (sale.voided) throw new HttpError(409, 'La venta ya está anulada');
     db.prepare('UPDATE sales SET voided=1 WHERE id=?').run(sale.id);
     for (const it of db.prepare('SELECT * FROM sale_items WHERE sale_id=?').all(sale.id)) moveStock(it.article_id, it.qty, 'anulacion', sale.id, user.id);
+    if (sale.account_amount > 0 && sale.customer_id) {
+      db.prepare('INSERT INTO account_movements (customer_id,amount,concept,sale_id,user_id) VALUES (?,?,?,?,?)')
+        .run(sale.customer_id, sale.account_amount, `Anulación venta #${sale.id}`, sale.id, user.id);
+    }
     // El reintegro sale de la caja abierta hoy, aunque la venta sea de una caja anterior.
     for (const p of db.prepare('SELECT * FROM sale_payments WHERE sale_id=?').all(sale.id)) {
       db.prepare('INSERT INTO cash_movements (session_id,type,method,amount,concept,sale_id,user_id) VALUES (?,?,?,?,?,?,?)')

@@ -29,7 +29,7 @@ npm test
 
 Casi siempre es que **la versión anterior sigue abierta**: su ventana negra no se cerró y, al abrir la nueva, el navegador se conecta a la vieja. Cómo comprobarlo y solucionarlo:
 
-- **Mirá la versión**: está al pie de todas las pantallas («Liu Vi v1.7.1»), en la pantalla de acceso y en la primera línea de la ventana negra. Si no es la que bajaste, estás viendo la vieja.
+- **Mirá la versión**: está al pie de todas las pantallas («Liu Vi v1.8.0»), en la pantalla de acceso y en la primera línea de la ventana negra. Si no es la que bajaste, estás viendo la vieja.
 - Si al abrir `iniciar.bat` la ventana negra dice **«ATENCION: ya hay OTRA COPIA de Liu Vi abierta… de una version distinta»**, cerrá la ventana negra anterior (la que dice la versión vieja) y volvé a abrir `iniciar.bat`. El navegador solo se abre cuando el programa arrancó bien, así que en ese caso no se abre.
 - El programa le indica al navegador que consulte siempre si hay archivos nuevos (los scripts y estilos llevan la versión en su dirección), y la página se recarga sola una vez si detecta que quedó guardada una versión anterior. Si aun así dudás, probá `Ctrl + F5`.
 

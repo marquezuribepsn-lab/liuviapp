@@ -44,6 +44,7 @@
   <h1><img class="logo" src="/img/logo-blanco.png" alt="Liu Vi"></h1>
   <nav id="tabs">
     <button data-tab="venta" class="active">Ventas y caja</button>
+    <button data-tab="clientes">Clientes</button>
     <button data-tab="articulos">Artículos</button>
     <button data-tab="stock">Stock</button>
     <button data-tab="etiquetas">Etiquetas</button>
@@ -77,9 +78,10 @@
       <table id="cart"><thead><tr><th>Artículo</th><th>Cant.</th><th>Precio</th><th>Subtotal</th><th></th></tr></thead><tbody></tbody></table>
       <div class="totals">
         <label class="inline"><input type="checkbox" id="autoTicket"> Imprimir comprobante al cobrar</label>
-        <div class="row">
-          <label>Cliente (opcional) <input id="custName" maxlength="120" placeholder="Nombre y apellido"></label>
-          <label>DNI / CUIT <input id="custDoc" maxlength="30" inputmode="numeric"></label>
+        <div id="custBox">
+          <label>Cliente (opcional) <input id="custSearch" autocomplete="off" placeholder="Buscar por nombre, DNI o teléfono"></label>
+          <div id="custResults" class="list"></div>
+          <div id="custChip" class="custChip" hidden></div>
         </div>
         <label>Descuento % <input id="discount" type="number" min="0" max="100" value="0"></label>
         <div>Subtotal: <b id="subtotal">$0</b></div>
@@ -90,11 +92,13 @@
         <label>Efectivo <input id="payEfectivo" type="number" min="0" step="0.01"></label>
         <label>Tarjeta <input id="payTarjeta" type="number" min="0" step="0.01"></label>
         <label>Transferencia <input id="payTransferencia" type="number" min="0" step="0.01"></label>
+        <label id="payCuentaWrap" hidden>Cuenta del cliente <input id="payCuenta" type="number" min="0" step="0.01"></label>
       </div>
       <div class="row">
         <button class="ghost" data-full="Efectivo">Todo efectivo</button>
         <button class="ghost" data-full="Tarjeta">Todo tarjeta</button>
         <button class="ghost" data-full="Transferencia">Todo transferencia</button>
+        <button class="ghost" id="useCredit" hidden>Usar saldo a favor</button>
       </div>
       <div id="change" class="muted"></div>
       <div class="row">
@@ -214,6 +218,42 @@
       </div>
       <div class="row end"><button type="button" id="artCancel" class="ghost">Cancelar</button><button class="primary">Guardar</button></div>
     </form>
+  </dialog>
+</section>
+
+<!-- CLIENTES -->
+<section id="clientes" class="tab" hidden>
+  <div class="row">
+    <input id="cliSearch" placeholder="Buscar por nombre, DNI o teléfono">
+    <label class="inline"><input type="checkbox" id="cliAll"> Ver dados de baja</label>
+    <label class="inline"><input type="checkbox" id="cliDebt"> Solo con saldo</label>
+    <button id="cliNew" class="primary">+ Nuevo cliente</button>
+  </div>
+  <table id="cliTable"><thead><tr><th>Nombre</th><th>DNI / CUIT</th><th>Teléfono</th><th>Cuenta</th><th>Compras</th><th>Total comprado</th><th>Última compra</th></tr></thead><tbody></tbody></table>
+  <p class="muted" id="cliNote" style="margin:8px 2px"></p>
+  <dialog id="cliDialog">
+    <form id="cliForm" method="dialog">
+      <h2 id="cliTitle">Cliente</h2>
+      <label>Nombre y apellido <input name="name" required maxlength="120"></label>
+      <div class="grid2">
+        <label>DNI / CUIT <input name="doc" maxlength="30" inputmode="numeric"></label>
+        <label>Teléfono <input name="phone" maxlength="40" inputmode="tel"></label>
+      </div>
+      <label>Correo <input name="email" type="email" maxlength="120"></label>
+      <label>Nota (talle, gustos, aclaraciones) <input name="note" maxlength="300"></label>
+      <div id="cliError" class="neg"></div>
+      <div class="row end"><button type="button" id="cliCancel" class="ghost">Cancelar</button><button class="primary">Guardar</button></div>
+    </form>
+  </dialog>
+  <dialog id="cliDetail" class="wide">
+    <div class="row"><h2 id="cdName" style="margin:0"></h2><span class="grow"></span><button type="button" id="cdClose" class="ghost">Cerrar</button></div>
+    <p class="muted" id="cdInfo"></p>
+    <div class="kpis" id="cdKpis"></div>
+    <div class="row" id="cdActions"></div>
+    <h3>Cuenta corriente</h3>
+    <div class="scrollBox" style="max-height:200px"><table id="cdMovs"><thead><tr><th>Fecha</th><th>Concepto</th><th>Monto</th><th>Usuario</th></tr></thead><tbody></tbody></table></div>
+    <h3>Compras</h3>
+    <div class="scrollBox" style="max-height:220px"><table id="cdSales"><thead><tr><th>N°</th><th>Fecha</th><th>Detalle</th><th>Total</th><th></th></tr></thead><tbody></tbody></table></div>
   </dialog>
 </section>
 
@@ -474,6 +514,16 @@
   </div>
 
   <div class="row end psec"><button type="button" id="profileLock" class="ghost">Bloquear ahora</button><button type="button" id="profileClose" class="primary">Cerrar</button></div>
+</dialog>
+<dialog id="payDialog">
+  <form id="payForm" method="dialog">
+    <h2 id="payTitle"></h2>
+    <p class="muted" id="payHelp"></p>
+    <label>Monto <input name="amount" type="number" min="0.01" step="0.01" required></label>
+    <label>Medio <select name="method"><option value="efectivo">Efectivo</option><option value="tarjeta">Tarjeta</option><option value="transferencia">Transferencia</option></select></label>
+    <div id="payError" class="neg"></div>
+    <div class="row end"><button type="button" id="payCancel" class="ghost">Cancelar</button><button class="primary">Confirmar</button></div>
+  </form>
 </dialog>
 <div id="printArea"></div>
 <script src="/barcode.js"></script>

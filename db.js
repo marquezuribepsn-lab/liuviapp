@@ -132,6 +132,29 @@ export function openDb(path = defaultDbPath()) {
       amount  REAL NOT NULL CHECK (amount > 0)
     );
 
+    -- Clientes y su cuenta corriente: el saldo es la suma de los movimientos (positivo = saldo a favor, negativo = debe).
+    CREATE TABLE IF NOT EXISTS customers (
+      id         INTEGER PRIMARY KEY,
+      name       TEXT NOT NULL,
+      doc        TEXT NOT NULL DEFAULT '',
+      phone      TEXT NOT NULL DEFAULT '',
+      email      TEXT NOT NULL DEFAULT '',
+      note       TEXT NOT NULL DEFAULT '',
+      active     INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    CREATE TABLE IF NOT EXISTS account_movements (
+      id          INTEGER PRIMARY KEY,
+      customer_id INTEGER NOT NULL REFERENCES customers(id),
+      amount      REAL NOT NULL CHECK (amount != 0),
+      concept     TEXT NOT NULL DEFAULT '',
+      method      TEXT,
+      sale_id     INTEGER REFERENCES sales(id),
+      user_id     INTEGER,
+      created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_account_customer ON account_movements(customer_id);
+
     CREATE TABLE IF NOT EXISTS brands (
       id   INTEGER PRIMARY KEY,
       name TEXT NOT NULL UNIQUE COLLATE NOCASE
@@ -178,6 +201,8 @@ export function openDb(path = defaultDbPath()) {
   ensureColumn('sales', 'user_id');
   ensureColumn('sales', 'customer_name');
   ensureColumn('sales', 'customer_doc');
+  ensureColumn('sales', 'customer_id');
+  ensureColumn('sales', 'account_amount', 'REAL NOT NULL DEFAULT 0'); // parte de la venta pagada con la cuenta del cliente
   ensureColumn('cash_movements', 'user_id');
   ensureColumn('stock_movements', 'user_id');
   ensureColumn('cash_sessions', 'opened_by');
@@ -197,6 +222,16 @@ export function openDb(path = defaultDbPath()) {
   if (!db.prepare('SELECT 1 FROM roles LIMIT 1').get()) {
     const ins = db.prepare('INSERT INTO roles (name, permissions, is_admin) VALUES (?,?,?)');
     for (const r of DEFAULT_ROLES) ins.run(r.name, JSON.stringify(r.permissions), r.is_admin);
+  }
+  // Roles creados antes de existir los clientes: los que ya venden pueden buscar, crear y cobrar clientes (el administrador lo ajusta en Usuarios).
+  if (!db.prepare("SELECT 1 FROM settings WHERE key='migr_clientes_v1'").get()) {
+    const NEW = ['clientes.ver', 'clientes.editar', 'clientes.cuenta'];
+    for (const r of db.prepare('SELECT id, permissions, is_admin FROM roles').all()) {
+      let perms; try { perms = JSON.parse(r.permissions); } catch { continue; }
+      if (r.is_admin || !perms.includes('ventas.cobrar')) continue;
+      db.prepare('UPDATE roles SET permissions=? WHERE id=?').run(JSON.stringify([...new Set([...perms, ...NEW])]), r.id);
+    }
+    setSetting(db, 'migr_clientes_v1', '1');
   }
   return db;
 }
