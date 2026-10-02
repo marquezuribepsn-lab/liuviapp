@@ -391,15 +391,19 @@
 <section id="copias" class="tab" hidden>
   <div class="split">
     <div class="card">
-      <h2>Copia de seguridad en Google Drive</h2>
-      <p class="muted">Instalá <b>Google Drive para escritorio</b> en esta computadora, creá una carpeta (por ejemplo «Liuvi») dentro de «Mi unidad» y pegá acá su ruta completa. El sistema guarda las copias ahí y Google Drive las sube solo.</p>
+      <h2>Google Drive (copia en la nube)</h2>
+      <div id="gdBox"></div>
+      <hr>
+      <h2>Esta computadora</h2>
+      <p class="muted">Cada computadora guarda sus copias en su propia carpeta y, si conectás Google Drive, en su propia subcarpeta con el nombre que le pongas.</p>
       <form id="bkForm">
-        <label>Carpeta de copias (ruta completa) <input id="bkDir" placeholder="C:\Users\Mi nombre\Mi unidad\Liuvi"></label>
+        <label>Nombre de esta computadora <input id="bkPc" maxlength="60" placeholder="Caja 1"></label>
+        <label>Carpeta de copias (ruta completa; vacío = la carpeta de esta computadora) <input id="bkDir"></label>
         <label class="inline"><input type="checkbox" id="bkAuto" checked> Copia automática (una vez por día y al cerrar la caja)</label>
         <div id="bkError" class="neg"></div>
         <div class="row"><button class="primary">Guardar</button><button type="button" id="bkRun" class="ghost">Hacer copia ahora</button></div>
       </form>
-      <p class="muted">Se conservan las últimas 30 copias. Las copias incluyen contraseñas cifradas de los usuarios: protegé tu cuenta de Google con verificación en dos pasos.</p>
+      <p class="muted">Se conservan las últimas 30 copias. Las copias incluyen contraseñas cifradas de los usuarios: protegé tu cuenta de Google con verificación en dos pasos. La conexión con Google es de esta computadora y no viaja dentro de las copias.</p>
     </div>
     <div class="card">
       <h2>Estado</h2>

@@ -793,11 +793,31 @@ $('#userForm').addEventListener('submit', async (e) => {
 });
 
 // ---------- Copias de seguridad ----------
+function renderGoogle(g) {
+  const box = $('#gdBox');
+  if (!g) { box.innerHTML = ''; return; }
+  const err = g.error ? `<p class="neg">${esc(g.error)}</p>` : '';
+  if (g.connected) {
+    box.innerHTML = `<p>✅ Conectado a Google Drive${g.email ? ` como <b>${esc(g.email)}</b>` : ''}.<br>Las copias se suben a la carpeta <b>${esc(g.folder)}</b> de tu Drive.</p>
+      <p class="muted">${g.last_at ? `Última subida: <b>${esc(g.last_at)}</b> (${esc(g.last_name)})` : 'Todavía no se subió ninguna copia. Se sube sola con cada copia (una por día y al cerrar la caja).'}</p>${err}
+      <div class="row"><button type="button" id="gdRun" class="primary">Hacer copia y subirla ahora</button><button type="button" id="gdOff" class="ghost">Desconectar</button></div>`;
+  } else if (g.configured) {
+    box.innerHTML = `<p>Conectá la cuenta de Google donde querés guardar las copias. Se abre la página de Google para que inicies sesión y des el permiso (solo accede a lo que crea este sistema).</p>${err}
+      <div class="row"><button type="button" id="gdOn" class="primary">Conectar con Google</button>${g.credentials_from === 'propias' ? '<button type="button" id="gdCreds" class="ghost">Cambiar credenciales</button>' : ''}</div>`;
+  } else {
+    box.innerHTML = `<p>Para conectar tu cuenta hay que cargar una sola vez las credenciales de Google (gratis, se crean en 5 minutos en Google Cloud). Los pasos están en el archivo <b>LEEME-GOOGLE-DRIVE.md</b> de la carpeta del programa.</p>${err}
+      <form id="gdCredForm"><label>ID de cliente <input name="id" placeholder="123456-abc.apps.googleusercontent.com" required></label>
+      <label>Secreto de cliente <input name="secret" type="password" autocomplete="off" required></label>
+      <div id="gdCredErr" class="neg"></div><button class="primary">Guardar credenciales</button></form>`;
+  }
+}
 function renderBackup(b) {
-  $('#bkDir').value = b.dir; $('#bkAuto').checked = b.auto; $('#bkError').textContent = '';
+  $('#bkDir').value = b.custom_dir ? b.dir : ''; $('#bkDir').placeholder = b.default_dir || 'C:\\Users\\Mi nombre\\Mi unidad\\Liuvi';
+  $('#bkPc').value = b.pc_name || ''; $('#bkAuto').checked = b.auto; $('#bkError').textContent = '';
+  renderGoogle(b.google);
   const parts = [];
   if (!b.dir) parts.push('<span class="neg">Sin configurar: todavía no se hacen copias.</span>');
-  else parts.push(b.last_at ? `Última copia: <b>${esc(b.last_at)}</b> (${esc(b.last_reason)})` : 'Todavía no se hizo ninguna copia.');
+  else parts.push(`Carpeta de esta computadora: <code style="word-break:break-all">${esc(b.dir)}</code>`, b.last_at ? `Última copia: <b>${esc(b.last_at)}</b> (${esc(b.last_reason)})` : 'Todavía no se hizo ninguna copia.');
   if (b.error) parts.push(`<span class="neg">Último error: ${esc(b.error)}</span>`);
   $('#bkStatus').innerHTML = parts.join('<br>');
   $('#bkDbFile').textContent = b.db_file || '';
@@ -805,16 +825,33 @@ function renderBackup(b) {
   $('#bkFiles tbody').innerHTML = b.files.map((f) => `<tr><td>${esc(f.name)}</td><td>${esc(f.at)}</td><td class="num">${(f.size / 1024).toFixed(0)} KB</td></tr>`).join('') || '<tr><td colspan="3" class="muted">Sin copias en la carpeta</td></tr>';
 }
 async function loadBackup() { renderBackup(await api('GET', '/backup')); }
+const bkBody = () => ({ dir: $('#bkDir').value, auto: $('#bkAuto').checked, pc_name: $('#bkPc').value });
 $('#bkForm').addEventListener('submit', async (e) => {
   e.preventDefault();
-  try { renderBackup(await api('PUT', '/backup', { dir: $('#bkDir').value, auto: $('#bkAuto').checked })); toast('Configuración guardada'); }
+  try { renderBackup(await api('PUT', '/backup', bkBody())); toast('Configuración guardada'); }
   catch (err) { $('#bkError').textContent = err.message; }
 });
-$('#bkRun').addEventListener('click', async () => {
+async function backupNow() {
   try {
-    renderBackup(await api('PUT', '/backup', { dir: $('#bkDir').value, auto: $('#bkAuto').checked }));
-    renderBackup(await api('POST', '/backup/run', {})); toast('Copia realizada');
-  } catch (err) { $('#bkError').textContent = err.message; }
+    renderBackup(await api('PUT', '/backup', bkBody()));
+    toast('Haciendo la copia…');
+    renderBackup(await api('POST', '/backup/run', {}));
+    toast('Copia realizada');
+  } catch (err) { $('#bkError').textContent = err.message; toast(err.message, true); }
+}
+$('#bkRun').addEventListener('click', backupNow);
+$('#gdBox').addEventListener('click', guard(async (e) => {
+  const id = e.target.id;
+  if (id === 'gdRun') await backupNow();
+  if (id === 'gdOn') { const { url } = await api('POST', '/backup/google/start', {}); location.href = url; }
+  if (id === 'gdOff' && confirm('¿Desconectar Google Drive? Las copias que ya están en tu Drive no se borran.')) { renderBackup(await api('POST', '/backup/google/disconnect', {})); toast('Google Drive desconectado'); }
+  if (id === 'gdCreds') renderGoogle({ configured: false });
+}));
+$('#gdBox').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target.elements;
+  try { renderBackup(await api('PUT', '/backup/google/credentials', { client_id: f.id.value, client_secret: f.secret.value })); toast('Credenciales guardadas'); }
+  catch (err) { $('#gdCredErr').textContent = err.message; }
 });
 
 // ---------- Sesión: acceso, bloqueo, perfil y seguridad ----------
@@ -961,6 +998,8 @@ async function boot() {
   renderCart();
   if (!first) return toast('Tu usuario no tiene permisos asignados. Pedile a un administrador que configure tu rol.', true);
   await guard(refreshCash)();
-  showTab(first);
+  const wanted = location.hash.slice(1);
+  showTab(wanted && TAB_PERMS[wanted] && canAny(...TAB_PERMS[wanted]) ? wanted : first);
+  if (wanted) history.replaceState(null, '', location.pathname);
 }
 boot().catch((e) => toast(e.message, true));

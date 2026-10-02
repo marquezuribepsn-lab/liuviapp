@@ -8,9 +8,9 @@ import { openDb } from '../db.js';
 import { createApp } from '../app.js';
 
 // Servidor en memoria. `client()` devuelve un cliente HTTP con su propio cookie jar (una sesión).
-export async function start() {
+export async function start(opts = {}) {
   const db = openDb(':memory:');
-  const server = createServer(createApp(db));
+  const server = createServer(createApp(db, opts));
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${server.address().port}`;
   const client = () => {
