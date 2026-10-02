@@ -7,6 +7,9 @@ import { createApp } from './app.js';
 import { relaunchServer } from './updater.js';
 import { APP_DIR } from './db.js';
 
+// Una falla inesperada en un pedido o en una tarea de fondo se registra, pero no cierra el sistema en medio de una venta.
+process.on('uncaughtException', (e) => console.error('Error inesperado (el sistema sigue funcionando):', e));
+process.on('unhandledRejection', (e) => console.error('Error inesperado en una tarea (el sistema sigue funcionando):', e));
 const port = Number(process.env.PORT) || 3000;
 // Una sola computadora: por defecto solo acepta conexiones de esta misma PC.
 // Para abrirlo a la red del local: HOST=0.0.0.0 npm start
@@ -22,6 +25,8 @@ const app = createApp(db, { restart: () => relaunchServer({ appDir: APP_DIR, clo
 app.backups.start();
 app.updater.start();
 server = createServer(app);
+server.keepAliveTimeout = 65_000; // evita cortar conexiones que el navegador reutiliza
+server.requestTimeout = 5 * 60_000; // importaciones y restauraciones grandes pueden tardar
 const silent = process.env.LIUVI_SILENT === '1'; // abierto desde el instalador: sin ventana negra
 const appWindow = process.env.LIUVI_APP_WINDOW === '1';
 const url = `http://localhost:${port}`;

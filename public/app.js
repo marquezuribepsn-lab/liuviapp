@@ -5,7 +5,9 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const time = (s) => s.slice(11, 16);
 
 async function api(method, path, body) {
-  const res = await fetch('/api' + path, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  let res;
+  try { res = await fetch('/api' + path, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); }
+  catch { throw new Error('No se pudo comunicar con Liu Vi. Si se cerró el programa, volvé a abrirlo desde el acceso directo.'); }
   const data = await res.json().catch(() => null);
   api.total = res.headers.get('X-Total-Count') === null ? null : Number(res.headers.get('X-Total-Count')); // total real de un listado
   if (res.status === 401 && !path.startsWith('/auth/')) { if (data?.locked) showLock(); else showLogin(); }
@@ -51,6 +53,11 @@ function toast(msg, error = false) {
 let me = null; // { user, permissions } de la sesión
 const can = (p) => !!me?.user?.permissions.includes(p);
 const canAny = (...ps) => ps.some(can);
+// Cualquier error que no se haya atrapado se avisa con calma en vez de dejar la pantalla trabada.
+let lastErrToast = 0;
+const softFail = (e) => { console.error(e); if (Date.now() - lastErrToast > 4000) { lastErrToast = Date.now(); try { toast('Algo no salió bien. Probá de nuevo; si sigue, avisá al administrador.', true); } catch { /* sin pantalla */ } } };
+window.addEventListener('error', (ev) => softFail(ev.error || ev.message));
+window.addEventListener('unhandledrejection', (ev) => { ev.preventDefault(); softFail(ev.reason); });
 const guard = (fn) => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message, true); } };
 const debounce = (fn, ms = 250) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 const avail = (a) => a.stock - (a.reserved || 0); // lo apartado con seña no se puede vender a otro
@@ -60,14 +67,26 @@ const articleLabel = (a) => [a.brand, a.name, a.size && `Talle ${a.size}`, a.col
 let currentTab = 'venta';
 const loaders = { inicio: loadDashboard, proveedores: loadSuppliers, reportes: loadReports, venta: loadCash, clientes: loadCustomers, etiquetas: loadPrintTab, articulos: loadArticles, stock: loadStock, stats: loadStats, usuarios: loadUsers, copias: loadBackup };
 const TAB_PERMS = { inicio: ['estadisticas.ver', 'caja.ver'], venta: ['ventas.cobrar', 'caja.ver', 'caja.operar'], clientes: ['clientes.ver'], articulos: ['articulos.ver'], etiquetas: ['articulos.ver'], stock: ['stock.ver'], proveedores: ['proveedores.ver'], stats: ['estadisticas.ver'], reportes: ['estadisticas.ver', 'caja.ver', 'stock.ver', 'clientes.ver'], usuarios: ['usuarios.admin'], copias: ['sistema.copias'] };
+// Dos niveles: «Inventario» (Artículos, Stock, Proveedores) y «Reportes y estadísticas» (Estadísticas, Reportes) agrupan sus secciones.
+const GROUPS = { inventario: ['articulos', 'stock', 'proveedores'], reportes: ['stats', 'reportes'] };
+const groupOf = (tab) => Object.keys(GROUPS).find((g) => GROUPS[g].includes(tab)) || null;
+const tabAllowed = (tab) => !!TAB_PERMS[tab] && canAny(...TAB_PERMS[tab]);
+const lastInGroup = {};
 function showTab(name) {
   currentTab = name;
-  $$('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
+  const group = groupOf(name);
+  if (group) lastInGroup[group] = name;
+  $$('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === name || (!!group && b.dataset.group === group)));
+  $$('#subTabs button').forEach((b) => { b.hidden = b.dataset.in !== group || !tabAllowed(b.dataset.tab); b.classList.toggle('active', b.dataset.tab === name); });
+  $('#subTabs').hidden = !group;
   $$('.tab').forEach((s) => (s.hidden = s.id !== name));
   guard(loaders[name])();
-  if (name === 'venta') $('#scan').focus();
+  if (name === 'venta') { $('#scan').focus(); refreshOffers(); }
 }
-$('#tabs').addEventListener('click', (e) => e.target.dataset.tab && showTab(e.target.dataset.tab));
+// Qué sección abre cada botón de la barra principal (el último grupo visitado recuerda su sección).
+const tabOfButton = (b) => b.dataset.tab || (lastInGroup[b.dataset.group] && tabAllowed(lastInGroup[b.dataset.group]) ? lastInGroup[b.dataset.group] : GROUPS[b.dataset.group].find(tabAllowed));
+$('#subTabs').addEventListener('click', (e) => e.target.dataset.tab && showTab(e.target.dataset.tab));
+$('#tabs').addEventListener('click', (e) => { const b = e.target.closest('button'); const t = b && tabOfButton(b); if (t) showTab(t); });
 
 // En la pantalla de venta, cualquier tecla (o el lector) va al campo de escaneo.
 document.addEventListener('keydown', (e) => {
@@ -102,13 +121,22 @@ function setAdjust(a = {}) {
   for (const [id, t] of [['#discType', adj.dType], ['#sureType', adj.sType]]) $$(id + ' button').forEach((b) => b.classList.toggle('active', b.dataset.t === t));
 }
 const hasAdjust = () => { const a = adjustBody(); return a.discount_pct + a.discount_amount + a.surcharge_pct + a.surcharge_amount > 0; };
+// Ofertas vigentes (las manda el servidor; el cálculo es el mismo en los dos lados). Se refrescan al abrir la venta y cada tanto.
+let offers = [], offersAt = 0;
+async function refreshOffers(force = false) {
+  if (!force && Date.now() - offersAt < 60_000) return;
+  try { offers = await api('GET', '/promotions/active'); offersAt = Date.now(); renderCart(); } catch { /* sin permiso o sin conexión: se vende sin ofertas */ }
+}
+const cartPromo = () => (cart.length && offers.length ? Promo.apply(offers, cart.map((l) => ({ article_id: l.a.id, price: l.a.price, qty: l.qty }))) : { total: 0, detail: [] });
 const cartTotals = () => {
   const subtotal = r2(cart.reduce((s, l) => s + l.a.price * l.qty, 0));
+  const promo = cartPromo();
+  const afterPromo = r2(subtotal - promo.total);
   const a = adjustBody();
-  const discount = Math.min(subtotal, a.discount_amount > 0 ? a.discount_amount : r2(subtotal * Math.min(100, a.discount_pct) / 100));
-  const base = r2(subtotal - discount);
+  const manual = Math.min(afterPromo, a.discount_amount > 0 ? a.discount_amount : r2(afterPromo * Math.min(100, a.discount_pct) / 100));
+  const base = r2(afterPromo - manual);
   const surcharge = a.surcharge_amount > 0 ? a.surcharge_amount : r2(base * Math.min(100, a.surcharge_pct) / 100);
-  return { subtotal, discount, surcharge, total: r2(base + surcharge) };
+  return { subtotal, promo, discount: manual, surcharge, total: r2(base + surcharge) };
 };
 function renderCart() {
   $('#cart tbody').innerHTML = cart.map((l, i) => `
@@ -116,8 +144,11 @@ function renderCart() {
     <td><button class="link" data-q="${i}:-1">−</button> ${l.qty} <button class="link" data-q="${i}:1">+</button></td>
     <td class="num">${money(l.a.price)}</td><td class="num">${money(l.a.price * l.qty)}</td>
     <td><button class="link" data-rm="${i}">✕</button></td></tr>`).join('') || '<tr><td colspan="5" class="muted">Escaneá un artículo para empezar</td></tr>';
-  const { subtotal, discount, surcharge, total } = cartTotals();
+  const { subtotal, promo, discount, surcharge, total } = cartTotals();
   $('#subtotal').textContent = money(subtotal);
+  $('#promoLine').hidden = !(promo.total > 0); $('#promoShow').textContent = '− ' + money(promo.total);
+  $('#promoShow').title = promo.detail.map((d) => `${d.name}: ${money(d.amount)}`).join('\n');
+  $('#promoLabel').textContent = promo.detail.length === 1 ? `Oferta: ${promo.detail[0].name}` : 'Ofertas';
   $('#discLine').hidden = !(discount > 0); $('#discShow').textContent = '− ' + money(discount);
   $('#sureLine').hidden = !(surcharge > 0); $('#sureShow').textContent = '+ ' + money(surcharge);
   $('#total').textContent = money(total);
@@ -745,6 +776,8 @@ $('#impClose').addEventListener('click', () => $('#importDialog').close());
 let adjArticle = null, sbSeq = 0;
 const REASON = { inicial: 'Carga inicial', compra: 'Compra', venta: 'Venta', anulacion: 'Anulación de venta', anulacion_compra: 'Anulación de compra', correccion_compra: 'Corrección de compra', ajuste: 'Ajuste', devolucion: 'Devolución', limpieza: 'Limpieza de stock' };
 async function loadStock() {
+  $('#offNew').hidden = !can('articulos.editar');
+  loadOffersInfo().catch(() => {});
   const s = await api('GET', '/stock/summary');
   $('#stockSummary').innerHTML = [['Artículos (SKU)', s.skus], ['Unidades', s.units], ['Valor a costo', s.cost_value == null ? '—' : money(s.cost_value)], ['Valor a precio de venta', money(s.retail_value)], ['Con stock bajo', s.low]]
     .map(([k, v]) => `<div class="kpi"><span>${k}</span><b>${v}</b></div>`).join('');
@@ -1217,6 +1250,104 @@ $('#groupSeg').addEventListener('click', guard(async (e) => {
   await loadStats();
 }));
 
+// ---------- Ofertas (en Stock) ----------
+const OFFER_STATE = (o) => {
+  const t = today();
+  if (!o.active) return ['Desactivada', 'muted'];
+  if (o.starts_on && o.starts_on > t) return ['Programada', 'muted'];
+  if (o.ends_on && o.ends_on < t) return ['Vencida', 'neg'];
+  return ['Vigente', 'pos'];
+};
+async function loadOffersInfo() {
+  const list = await api('GET', '/promotions');
+  const live = list.filter((o) => OFFER_STATE(o)[0] === 'Vigente').length;
+  $('#offInfo').textContent = list.length ? `${live} oferta${live === 1 ? '' : 's'} vigente${live === 1 ? '' : 's'} de ${list.length}. Se aplican solas al cobrar.` : 'Todavía no creaste ofertas. Podés hacer descuentos en %, precio fijo, 2x1, 3x2 o segunda unidad con descuento.';
+  return list;
+}
+async function openOffersList() {
+  const list = await loadOffersInfo();
+  const edit = can('articulos.editar');
+  $('#offTable tbody').innerHTML = list.map((o) => {
+    const [st, cls] = OFFER_STATE(o);
+    const vig = o.starts_on || o.ends_on ? `${o.starts_on ? 'desde ' + o.starts_on : ''}${o.starts_on && o.ends_on ? ' ' : ''}${o.ends_on ? 'hasta ' + o.ends_on : ''}` : 'siempre';
+    return `<tr><td><b>${esc(o.name)}</b></td><td>${esc(Promo.describe(o))}</td><td title="${esc(o.article_labels.map((a) => a.label).slice(0, 30).join('\n'))}">${o.article_ids.length}</td><td>${esc(vig)}</td><td class="${cls}">${st}</td>
+      <td>${edit ? `<button class="link" data-oedit="${o.id}">Editar</button><button class="link" data-otoggle="${o.id}" data-on="${o.active ? 0 : 1}">${o.active ? 'Desactivar' : 'Activar'}</button><button class="link" data-odel="${o.id}">Borrar</button>` : ''}</td></tr>`;
+  }).join('') || '<tr><td colspan="6" class="muted">Todavía no hay ofertas</td></tr>';
+  offersCache = list;
+  if (!$('#offListDialog').open) $('#offListDialog').showModal();
+}
+let offersCache = [];
+$('#offView').addEventListener('click', guard(openOffersList));
+$('#offListClose').addEventListener('click', () => $('#offListDialog').close());
+$('#offTable').addEventListener('click', guard(async (e) => {
+  const d = e.target.dataset;
+  if (d.oedit) return openOfferDialog(offersCache.find((o) => o.id === Number(d.oedit)));
+  if (d.otoggle) {
+    try { await api('PUT', '/promotions/' + d.otoggle, { active: d.on === '1' }); } catch (err) { await uiAlert(err.message, 'No se pudo cambiar'); return; }
+    await openOffersList(); refreshOffers(true);
+  }
+  if (d.odel && await uiConfirm('¿Borrar esta oferta? Las ventas ya hechas no cambian.', { ok: 'Borrar', danger: true })) { await api('DELETE', '/promotions/' + d.odel); await openOffersList(); refreshOffers(true); }
+}));
+let offPicked = new Map(), offFound = [], editingOffer = null;
+const OFFER_HELP = {
+  percent: 'Se descuenta ese porcentaje a cada unidad de los artículos elegidos.',
+  price: 'Cada unidad de los artículos elegidos se vende a ese precio (si ya cuesta menos, no cambia).',
+  nxm: 'Ej: 2x1 = llevás 2 y pagás 1; 3x2 = llevás 3 y pagás 2. Se combinan entre todos los artículos de la oferta y sale gratis el más barato de cada grupo.',
+  second: 'Ej: 50% en la segunda unidad. Por cada dos unidades de la oferta, la más barata lleva ese descuento.',
+};
+function syncOfferKind() {
+  const k = $('#offKind').value;
+  $$('#offForm [data-for]').forEach((l) => { l.hidden = !l.dataset.for.split(' ').includes(k); });
+  $('#offHelp').textContent = OFFER_HELP[k];
+}
+$('#offKind').addEventListener('change', syncOfferKind);
+function renderOfferPicked() {
+  $('#offCount').textContent = `(${offPicked.size})`;
+  $('#offPicked tbody').innerHTML = [...offPicked].map(([id, label]) => `<tr><td>${esc(label)}</td><td><button type="button" class="link" data-orm="${id}">Quitar</button></td></tr>`).join('') || '<tr><td colspan="2" class="muted">Todavía no agregaste artículos</td></tr>';
+}
+async function searchOfferArticles() {
+  const q = $('#offSearch').value.trim(), brand = $('#offBrand').value;
+  offFound = q || brand ? await api('GET', `/articles?limit=60&q=${encodeURIComponent(q)}${brand ? '&brand_id=' + brand : ''}`) : [];
+  $('#offResults tbody').innerHTML = offFound.map((a, i) => `<tr data-opick="${i}" style="cursor:pointer${offPicked.has(a.id) ? ';opacity:.45' : ''}"><td>${esc(articleLabel(a))}</td><td class="num">${money(a.price)}</td></tr>`).join('') || '<tr><td colspan="2" class="muted">Buscá por nombre o elegí una marca</td></tr>';
+}
+$('#offSearch').addEventListener('input', debounce(guard(searchOfferArticles)));
+$('#offBrand').addEventListener('change', guard(searchOfferArticles));
+$('#offResults').addEventListener('click', (e) => { const tr = e.target.closest('tr[data-opick]'); if (!tr) return; const a = offFound[Number(tr.dataset.opick)]; offPicked.set(a.id, articleLabel(a)); renderOfferPicked(); searchOfferArticles(); });
+$('#offAddAll').addEventListener('click', guard(async () => {
+  const q = $('#offSearch').value.trim(), brand = $('#offBrand').value;
+  if (!q && !brand) return setMsg('offError', 'Buscá algo o elegí una marca para agregar todos sus artículos.');
+  const all = await api('GET', `/articles?limit=2000&q=${encodeURIComponent(q)}${brand ? '&brand_id=' + brand : ''}`);
+  for (const a of all) offPicked.set(a.id, articleLabel(a));
+  setMsg('offError', ''); renderOfferPicked(); searchOfferArticles();
+}));
+$('#offPicked').addEventListener('click', (e) => { if (e.target.dataset.orm) { offPicked.delete(Number(e.target.dataset.orm)); renderOfferPicked(); searchOfferArticles(); } });
+async function openOfferDialog(o = null) {
+  editingOffer = o?.id ?? null;
+  const f = $('#offForm'); f.reset(); setMsg('offError', '');
+  $('#offTitle').textContent = o ? 'Editar oferta' : 'Crear oferta';
+  const brands = await api('GET', '/brands');
+  $('#offBrand').innerHTML = '<option value="">Todas las marcas</option>' + brands.map((b) => `<option value="${b.id}">${esc(b.name)}</option>`).join('');
+  $('#offSearch').value = '';
+  offPicked = new Map(o ? o.article_ids.map((id) => [id, o.article_labels.find((x) => x.id === id)?.label || `Artículo #${id}`]) : []);
+  for (const k of ['name', 'kind', 'pct', 'price', 'buy', 'pay', 'starts_on', 'ends_on']) f.elements[k].value = o ? (o[k] || (k === 'name' || k === 'kind' ? o[k] : '')) : (k === 'kind' ? 'percent' : '');
+  syncOfferKind(); renderOfferPicked(); searchOfferArticles();
+  if ($('#offListDialog').open) $('#offListDialog').close();
+  $('#offDialog').showModal(); f.elements.name.focus();
+}
+$('#offNew').addEventListener('click', guard(() => openOfferDialog()));
+$('#offCancel').addEventListener('click', () => $('#offDialog').close());
+$('#offForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const body = { article_ids: [...offPicked.keys()] };
+  for (const k of ['name', 'kind', 'pct', 'price', 'buy', 'pay', 'starts_on', 'ends_on']) body[k] = f.elements[k].value;
+  try {
+    if (editingOffer) await api('PUT', '/promotions/' + editingOffer, body); else await api('POST', '/promotions', body);
+    $('#offDialog').close(); toast('Oferta guardada'); refreshOffers(true);
+    await loadOffersInfo();
+  } catch (err) { setMsg('offError', err.message); }
+});
+
 // ---------- Proveedores y compras ----------
 const owedHtml = (n) => (n > 0.004 ? `<b class="neg">${money(n)}</b>` : n < -0.004 ? `<span class="pos">${money(-n)} a favor</span>` : '<span class="muted">al día</span>');
 async function loadSuppliers() {
@@ -1501,7 +1632,7 @@ function ticketHtml(s, copy) {
     <hr>
     ${s.items.map((i) => `<div>${esc(i.name)}</div>` + row(`${i.qty} x ${money(i.price)}`, money(i.qty * i.price))).join('')}
     <hr>
-    ${s.discount || s.surcharge ? row('Subtotal', money(s.subtotal)) + (s.discount ? row('Descuento', '-' + money(s.discount)) : '') + (s.surcharge ? row('Recargo', '+' + money(s.surcharge)) : '') : ''}
+    ${s.discount || s.surcharge ? row('Subtotal', money(s.subtotal)) + saleDiscounts(s).map(([l, v]) => row(esc(l), '-' + money(v))).join('') + (s.surcharge ? row('Recargo', '+' + money(s.surcharge)) : '') : ''}
     ${row('TOTAL', money(s.total), 'tot')}
     <hr>${pays}
     <hr><div class="c">${esc(settings.footer)}</div>
@@ -1538,7 +1669,7 @@ function comprobanteHtml(s, copy) {
       ${s.items.map((i) => `<tr><td>${esc(i.name)}</td><td class="n">${i.qty}</td><td class="n">${money(i.price)}</td><td class="n">${money(i.qty * i.price)}</td></tr>`).join('')}
     </tbody></table>
     <div class="ct">
-      ${s.discount || s.surcharge ? `<div>Subtotal: ${money(s.subtotal)}</div>${s.discount ? `<div>Descuento: -${money(s.discount)}</div>` : ''}${s.surcharge ? `<div>Recargo: +${money(s.surcharge)}</div>` : ''}` : ''}
+      ${s.discount || s.surcharge ? `<div>Subtotal: ${money(s.subtotal)}</div>${saleDiscounts(s).map(([l, v]) => `<div>${esc(l)}: -${money(v)}</div>`).join('')}${s.surcharge ? `<div>Recargo: +${money(s.surcharge)}</div>` : ''}` : ''}
       <div class="tot">TOTAL: ${money(s.total)}</div>
       <div class="cpay">Pago: ${esc(pay)}${s.change ? ` · Vuelto: ${money(s.change)}` : ''}</div>
     </div>
@@ -1549,6 +1680,13 @@ const pageName = () => (settings.pageSize === 'letter' ? 'letter' : 'A4');
 const PAGE_MM = () => (settings.pageSize === 'letter' ? [215.9, 279.4] : [210, 297]);
 // Térmica: un ticket por copia, cada uno en su tramo de rollo. Común: hoja con el comprobante
 // (las dos copias juntas si entran, separadas por una línea de corte; si no, una por hoja).
+// Descuentos de una venta: cada oferta por separado y, aparte, el descuento manual.
+function saleDiscounts(s) {
+  let det = s.promo_detail; if (typeof det === 'string') { try { det = JSON.parse(det); } catch { det = []; } }
+  det = Array.isArray(det) ? det : [];
+  const manual = r2((s.discount || 0) - (s.promo_discount || 0));
+  return [...det.map((d) => [`Oferta: ${d.name}`, d.amount]), ...(manual > 0 ? [['Descuento', manual]] : [])];
+}
 function printDocument(doc, { ticket, comp, count }) {
   const copies = COPIES[settings.copies] || COPIES.both;
   if (settings.paper === '58' || settings.paper === '80') {
@@ -2113,6 +2251,7 @@ function startIdleWatch() {
 let bbTimer = null;
 async function pollBackup() {
   const bar = $('#backupBar');
+  if (document.hidden) return; // ventana minimizada o en segundo plano: no hace falta consultar
   try {
     if (!me?.user || !$('#login').hidden) { bar.hidden = true; return; }
     const st = await api('GET', '/backup/activity');
@@ -2148,7 +2287,7 @@ async function boot() {
   $('#clearCard').hidden = !can('stock.limpiar');
   $('#artNew').hidden = $('#artImport').hidden = $('#artPrices').hidden = !can('articulos.editar');
   let first = null;
-  $$('#tabs button').forEach((b) => { const ok = canAny(...TAB_PERMS[b.dataset.tab]); b.hidden = !ok; if (ok && !first) first = b.dataset.tab; });
+  $$('#tabs button').forEach((b) => { const t = tabOfButton(b); b.hidden = !t; if (t && !first) first = t; });
   renderPayLines(); renderCart();
   if (!first) return toast('Tu usuario no tiene permisos asignados. Pedile a un administrador que configure tu rol.', true);
   await guard(refreshCash)();
