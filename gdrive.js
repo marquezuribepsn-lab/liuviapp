@@ -58,7 +58,17 @@ export function createGoogleDrive(db, { base, keep = KEEP_REMOTE, clientFile = j
     };
   }
 
-  function saveCredentials({ client_id, client_secret }) {
+  // Acepta el archivo que baja Google Cloud («client_secret_….json»): tiene que ser de tipo «Aplicación de escritorio».
+  function parseCredentialsFile(input) {
+    let j = input;
+    if (typeof input === 'string') { try { j = JSON.parse(input); } catch { throw new Error('El archivo no es un JSON válido'); } }
+    if (j?.web && !j.installed) throw new Error('Ese archivo es de tipo «Aplicación web». En Google Cloud creá un ID de cliente de tipo «Aplicación de escritorio» y bajá ese archivo.');
+    const c = j?.installed || j;
+    if (!c?.client_id || !c?.client_secret) throw new Error('El archivo no tiene el ID y el secreto de cliente. Bajá el JSON del ID de cliente de OAuth desde Google Cloud.');
+    return { client_id: c.client_id, client_secret: c.client_secret };
+  }
+  function saveCredentials(input) {
+    const { client_id, client_secret } = input && (input.json !== undefined) ? parseCredentialsFile(input.json) : (input || {});
     const id = String(client_id ?? '').trim(), secret = String(client_secret ?? '').trim();
     if (!id || !secret) throw new Error('Completá el ID de cliente y el secreto');
     if (!/^[\w.-]+\.apps\.googleusercontent\.com$/.test(id)) throw new Error('El ID de cliente debería terminar en .apps.googleusercontent.com');
@@ -79,12 +89,12 @@ export function createGoogleDrive(db, { base, keep = KEEP_REMOTE, clientFile = j
   }
   const form = (o) => ({ method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(o) });
 
-  function authUrl(redirect) {
+  function authUrl(redirect, { popup = false } = {}) {
     const c = creds();
     if (!c) throw new Error('Primero cargá las credenciales de Google (ID de cliente y secreto)');
     for (const [k, v] of pending) if (v.exp < Date.now()) pending.delete(k);
     const verifier = b64url(randomBytes(32)), state = b64url(randomBytes(24));
-    pending.set(state, { verifier, redirect, exp: Date.now() + PENDING_MS });
+    pending.set(state, { verifier, redirect, popup, exp: Date.now() + PENDING_MS });
     const p = new URLSearchParams({
       client_id: c.id, redirect_uri: redirect, response_type: 'code', scope: SCOPES, state,
       code_challenge: b64url(createHash('sha256').update(verifier).digest()), code_challenge_method: 'S256',
@@ -94,6 +104,7 @@ export function createGoogleDrive(db, { base, keep = KEEP_REMOTE, clientFile = j
   }
 
   // Vuelta desde Google: el "state" es de un solo uso y solo lo conoce quien inició la conexión desde el sistema.
+  const isPopup = (state) => !!pending.get(state)?.popup;
   async function finish(state, code) {
     const p = pending.get(state);
     pending.delete(state);
@@ -206,5 +217,5 @@ export function createGoogleDrive(db, { base, keep = KEEP_REMOTE, clientFile = j
     return c;
   }
 
-  return { status, saveCredentials, authUrl, finish, enqueue, idle: () => chain, disconnect, connected, pcName, STRIP_KEYS: KEYS };
+  return { status, saveCredentials, authUrl, finish, isPopup, enqueue, idle: () => chain, disconnect, connected, pcName, STRIP_KEYS: KEYS };
 }

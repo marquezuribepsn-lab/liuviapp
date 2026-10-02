@@ -1231,15 +1231,21 @@ export function createApp(db, opts = {}) {
     try { gdrive.saveCredentials(body); } catch (e) { throw bad(e.message); }
     return backups.status();
   });
-  route('POST', '/api/backup/google/start', BACKUP, ({ req }) => {
+  route('POST', '/api/backup/google/start', BACKUP, ({ req, body }) => {
     const host = String(req.headers.host || '');
     if (!/^(127\.0\.0\.1|localhost|\[::1\]):\d+$/.test(host)) throw bad('Para conectar Google abrí el sistema desde esta computadora, en http://127.0.0.1:3000 (no desde otro equipo)');
-    try { return { url: gdrive.authUrl(`http://${host}/api/backup/google/callback`) }; } catch (e) { throw bad(e.message); }
+    try { return { url: gdrive.authUrl(`http://${host}/api/backup/google/callback`, { popup: !!body.popup }) }; } catch (e) { throw bad(e.message); }
   });
   // Google vuelve acá con el navegador (sin cookie de sesión: la protege el "state" de un solo uso).
   route('GET', '/api/backup/google/callback', 'public', async ({ query }) => {
-    const page = (ok, msg) => ({ html: `<!doctype html><meta charset="utf-8"><title>Liu Vi</title><meta http-equiv="refresh" content="${ok ? 2 : 6};url=/#copias">
-      <body style="font:18px system-ui;max-width:520px;margin:15vh auto;padding:0 20px;text-align:center"><h2>${ok ? '✅' : '⚠️'} ${esc(msg)}</h2><p>Volviendo al sistema…</p></body>` });
+    const popup = gdrive.isPopup(query.get('state') || '');
+    // En la ventanita de Google se avisa a la pantalla principal y se cierra sola; si no, se vuelve al sistema.
+    const page = (ok, msg) => ({ html: `<!doctype html><meta charset="utf-8"><title>Liu Vi</title>
+      <body style="font:18px system-ui;max-width:520px;margin:15vh auto;padding:0 20px;text-align:center"><h2>${ok ? '✅' : '⚠️'} ${esc(msg)}</h2>
+      <p id="m">${popup ? 'Ya podés cerrar esta ventana.' : 'Volviendo al sistema…'}</p>
+      <script>${popup
+        ? `try{window.opener&&window.opener.postMessage({liuviGoogle:${ok ? 'true' : 'false'}},location.origin)}catch(e){}setTimeout(function(){window.close()},${ok ? 900 : 4000});`
+        : `setTimeout(function(){location.replace('/#copias')},${ok ? 1500 : 5000});`}</script></body>` });
     if (query.get('error')) return page(false, query.get('error') === 'access_denied' ? 'No diste el permiso: Google Drive no quedó conectado.' : `Google devolvió un error (${query.get('error')})`);
     try {
       await gdrive.finish(query.get('state') || '', query.get('code') || '');
@@ -1292,7 +1298,7 @@ export function createApp(db, opts = {}) {
           const body = req.method === 'GET' ? {} : await readBody(req);
           const out = await r.handler({ params, query: url.searchParams, body, user, can, req, res });
           if (out?.html) {
-            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'" });
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'" });
             return res.end(out.html);
           }
           if (out?.raw) {

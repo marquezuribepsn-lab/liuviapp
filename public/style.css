@@ -222,3 +222,17 @@ body.locked>footer{display:none}
 .dockDanger svg{color:var(--bad)}
 .dockBtn[hidden]{display:none}
 .payAct{display:flex;gap:6px;align-items:center}
+
+/* Lista de resultados de búsqueda: llega hasta donde termina el panel de cobro y se desplaza */
+#results:not(:empty){padding:6px;background:var(--card);border:1px solid var(--line);border-radius:12px}
+#results{overflow-y:auto}
+@media(min-width:851px){
+  .posLeft{position:relative;min-height:0}
+  .posLeftInner{position:absolute;inset:0 0 16px 0;display:flex;flex-direction:column} /* 16px = margen inferior del panel de cobro */
+  .posLeftInner #results{flex:0 1 auto;min-height:0;margin-top:8px;align-content:start}
+}
+@media(max-width:850px){#results{max-height:45vh}}
+.gBtn{display:inline-flex;align-items:center;gap:12px;background:#fff;color:#3c4043;border:1px solid #dadce0;border-radius:10px;padding:11px 20px;font-size:16px;font-weight:600;cursor:pointer}
+.gBtn:hover{background:#f6f9fe;border-color:#d2e3fc}
+.gFile{display:inline-block;padding:10px 16px;border:1px solid var(--line);border-radius:10px;cursor:pointer;background:var(--card);font-weight:600}
+.gFile:hover{border-color:var(--accent)}

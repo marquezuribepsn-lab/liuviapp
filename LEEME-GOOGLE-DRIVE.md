@@ -18,17 +18,18 @@ El sistema solo puede ver lo que él mismo sube (permiso «drive.file»): no pue
    - Tipo de aplicación: **Aplicación de escritorio**. Nombre: `Liu Vi`. Crear.
    - Copiá el **ID de cliente** y el **Secreto de cliente**.
 
-## 2. Cargarlas en Liu Vi
+## 2. Cargarlas en Liu Vi (una sola vez por computadora)
 
-1. Abrí el sistema **desde esa misma computadora** (`http://127.0.0.1:3000`, no desde otro equipo) → pestaña **Copias**.
-2. Pegá el ID y el secreto → **Guardar credenciales** → **Conectar con Google**.
-3. Elegí tu cuenta. Si Google avisa «Google no verificó esta aplicación», tocá **Configuración avanzada → Ir a Liu Vi** (es tu propia aplicación) y aceptá el permiso.
-4. Volvés al sistema con el cartel «Google Drive conectado». Tocá **Hacer copia y subirla ahora** para probar y mirá tu Drive.
+1. En Google Cloud, en el ID de cliente que creaste, tocá **Descargar JSON** (el archivo `client_secret_….json`).
+2. Abrí Liu Vi **en esa misma computadora** → pestaña **Copias** → **Importar archivo de Google (.json)** y elegí el archivo. (También se puede escribir el ID y el secreto a mano.)
+3. Aparece el botón **«Conectar con Google»**. Tocalo: se abre una **ventana de Google** igual que cuando entrás a una aplicación con «Acceder con Google». Elegí tu cuenta y tocá **Permitir**.
+4. Si Google avisa «Google no verificó esta aplicación», tocá **Configuración avanzada → Ir a Liu Vi** (es tu propia aplicación).
+5. La ventana se cierra sola y la pestaña Copias muestra «Conectado como tu@gmail.com». Tocá **Hacer copia y subirla ahora** para probar y mirá tu Drive.
 
 ## Varias computadoras
 
 - Cada computadora se conecta por separado (tocando «Conectar con Google» en esa computadora) y sube a su propia subcarpeta, con el **nombre de la computadora** que pongas en la pestaña Copias.
-- Para no cargar las credenciales en cada una, creá en la carpeta del programa un archivo `google-client.json` con este contenido y el sistema lo toma solo:
+- Para no importar el archivo en cada computadora, el instalador puede traerlo incorporado: se arma con el archivo `google-client.json` (o `installer/google-client.json`) y, en cada PC, alcanza con tocar **Conectar con Google**. A mano, en la carpeta del programa, es un archivo `google-client.json` con este contenido:
 
 ```json
 { "client_id": "123456-abc.apps.googleusercontent.com", "client_secret": "tu-secreto" }
