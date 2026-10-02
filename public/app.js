@@ -125,7 +125,7 @@ function renderCart() {
 }
 
 // Cobro: una o más líneas «medio + monto». La última línea sin monto cobra lo que falta.
-const PAY_LABEL = { efectivo: 'Efectivo', tarjeta: 'Tarjeta', transferencia: 'Transferencia', cuenta: 'Cuenta corriente / saldo del cliente' };
+const PAY_LABEL = { efectivo: 'Efectivo', tarjeta: 'Tarjeta', transferencia: 'Transferencia', cuenta: 'Saldo / cuenta del cliente' };
 let payLines = [{ method: 'efectivo', amount: '' }];
 function renderPayLines() {
   const methods = ['efectivo', 'tarjeta', 'transferencia', ...(saleCustomer?.id ? ['cuenta'] : [])];
@@ -133,14 +133,15 @@ function renderPayLines() {
   $('#payLines').innerHTML = payLines.map((l, i) => `<div class="payLine">
     <select data-pm="${i}" aria-label="Medio de pago">${methods.map((m) => `<option value="${m}"${m === l.method ? ' selected' : ''}>${PAY_LABEL[m]}</option>`).join('')}</select>
     <input data-pa="${i}" type="number" min="0" step="0.01" inputmode="decimal" value="${l.amount}" aria-label="Monto">
-    ${payLines.length > 1 ? `<button type="button" class="link" data-prm="${i}" title="Quitar">✕</button>` : '<span></span>'}</div>`).join('');
+    ${payLines.length > 1 ? `<span class="payAct"><button type="button" class="link" data-prest="${i}" title="Poner en este medio lo que falta">Resto</button><button type="button" class="link" data-prm="${i}" title="Quitar">✕</button></span>` : '<span></span>'}</div>`).join('');
   updateChange();
 }
+// Con un solo medio y sin monto se cobra el total. Con varios medios cada monto es explícito (vacío = 0) para ver cuánto falta.
 function effectivePays() {
-  const total = cartTotals().total, last = payLines.length - 1;
+  const total = cartTotals().total;
   const typed = payLines.map((l) => Math.max(0, Number(l.amount) || 0));
-  const others = typed.reduce((sum, v, i) => (i === last ? sum : sum + v), 0);
-  return payLines.map((l, i) => ({ method: l.method, amount: i === last && !typed[i] ? Math.max(0, r2(total - others)) : typed[i] }));
+  if (payLines.length === 1) return [{ method: payLines[0].method, amount: typed[0] || total }];
+  return payLines.map((l, i) => ({ method: l.method, amount: typed[i] }));
 }
 const paymentsEntered = () => effectivePays().filter((p) => p.method !== 'cuenta' && p.amount > 0);
 const accountEntered = () => (saleCustomer?.id ? r2(effectivePays().filter((p) => p.method === 'cuenta').reduce((sum, p) => sum + p.amount, 0)) : 0);
@@ -151,7 +152,7 @@ function updateChange() {
   const paid = r2(eff.reduce((sum, p) => sum + p.amount, 0)), diff = r2(paid - total);
   const hasCash = eff.some((p) => p.method === 'efectivo' && p.amount > 0);
   // El monto que se va a cobrar se ve en gris dentro de la última línea mientras no se escribe otro.
-  $$('#payLines input[data-pa]').forEach((inp, i) => { inp.placeholder = i === payLines.length - 1 ? String(eff[i]?.amount || 0) : '0'; });
+  $$('#payLines input[data-pa]').forEach((inp) => { inp.placeholder = payLines.length === 1 ? String(eff[0]?.amount || 0) : '0'; });
   const st = $('#payStatus');
   if (!cart.length) { st.className = 'payStatus'; st.textContent = ''; }
   else if (diff < 0) { st.className = 'payStatus falta'; st.textContent = `Falta cobrar ${money(-diff)}`; }
@@ -206,13 +207,19 @@ $('#payLines').addEventListener('change', (e) => {
 });
 $('#payLines').addEventListener('click', (e) => {
   if (e.target.dataset.prm !== undefined) { payLines.splice(Number(e.target.dataset.prm), 1); renderPayLines(); }
+  if (e.target.dataset.prest !== undefined) { // este medio paga lo que no cubren los demás
+    const i = Number(e.target.dataset.prest);
+    const others = payLines.reduce((sum, l, k) => (k === i ? sum : sum + (Number(l.amount) || 0)), 0);
+    payLines[i].amount = String(Math.max(0, r2(cartTotals().total - others)) || '');
+    renderPayLines();
+  }
 });
 $('#payAdd').addEventListener('click', () => {
   const used = new Set(payLines.map((l) => l.method));
   const next = ['efectivo', 'tarjeta', 'transferencia', ...(saleCustomer?.id ? ['cuenta'] : [])].find((m) => !used.has(m)) || 'efectivo';
   payLines.push({ method: next, amount: '' });
   renderPayLines();
-  const first = $('#payLines input[data-pa]'); if (first && !first.value) first.focus(); // se escribe cuánto paga con el primero; el último cobra el resto
+  const first = $('#payLines input[data-pa]'); if (first && !first.value) first.focus(); // se escribe cuánto paga con cada medio (o «Resto»)
 });
 // Menú «＋» con las acciones menos usadas (señar, poner en espera, reimprimir, vaciar).
 const closeMore = () => { $('#moreMenu').hidden = true; $('#moreBtn').setAttribute('aria-expanded', 'false'); };
@@ -224,7 +231,8 @@ function useCredit() {
   const total = cartTotals().total, bal = saleCustomer?.balance || 0;
   if (!(bal > 0)) return;
   const use = Math.min(bal, total);
-  setPayLines(use >= total ? [{ method: 'cuenta', amount: '' }] : [{ method: 'cuenta', amount: use }, { method: 'efectivo', amount: '' }]);
+  // Si el saldo alcanza: pago completo con la cuenta. Si no, queda el otro medio en 0 y se ve cuánto falta.
+  setPayLines(use >= total ? [{ method: 'cuenta', amount: '' }] : [{ method: 'cuenta', amount: String(use) }, { method: 'efectivo', amount: '' }]);
 }
 
 // Ventas en espera: se guardan en el servidor (sobreviven a cerrar la pantalla) y se retoman con los precios y el stock de ahora.
@@ -817,11 +825,7 @@ async function loadCash() {
       ].map(([k, v]) => `<div class="kpi"><span>${k}</span><b>${v}</b></div>`).join('');
       $('#expected').textContent = `Efectivo esperado: ${money(cash.expected_cash_now)}`;
     }
-    $('#cajaOps').hidden = !operar; $('#cajaMovs').hidden = !ver;
-    if (ver) {
-      const movs = await api('GET', '/cash/movements');
-      $('#cashMovTable tbody').innerHTML = movs.map((x) => `<tr><td>${time(x.created_at)}</td><td class="${x.type === 'ingreso' ? 'pos' : 'neg'}">${x.type}</td><td>${x.method}</td><td class="num">${money(x.amount)}</td><td>${esc(x.concept)}</td><td>${esc(x.user_name || '')}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Sin movimientos</td></tr>';
-    }
+    $('#dockMov').hidden = !operar; $('#dockClose').hidden = !operar; $('#dockList').hidden = !ver;
   }
   if (can('ventas.cobrar')) {
     await loadHeld();
@@ -859,16 +863,29 @@ $('#openForm').addEventListener('submit', guard(async (e) => {
   await api('POST', '/cash/open', { amount: Number($('#openAmount').value) || 0 });
   toast('Caja abierta'); await loadCash();
 }));
-$('#movForm').addEventListener('submit', guard(async (e) => {
+// Ingreso / egreso, movimientos y cierre de caja: ventanitas que se abren desde los botones de la pantalla de ventas.
+$('#dockMov').addEventListener('click', () => { $('#movForm').reset(); $('#movError').textContent = ''; $('#movDialog').showModal(); $('#movAmount').focus(); });
+$('#movCancel').addEventListener('click', () => $('#movDialog').close());
+$('#movForm').addEventListener('submit', async (e) => {
   e.preventDefault();
-  await api('POST', '/cash/movement', { type: $('#movType').value, method: $('#movMethod').value, amount: Number($('#movAmount').value), concept: $('#movConcept').value });
-  e.target.reset(); toast('Movimiento registrado'); await loadCash();
+  try {
+    await api('POST', '/cash/movement', { type: $('#movType').value, method: $('#movMethod').value, amount: Number($('#movAmount').value), concept: $('#movConcept').value });
+    $('#movDialog').close(); toast('Movimiento registrado'); await loadCash();
+  } catch (err) { $('#movError').textContent = err.message; }
+});
+$('#dockList').addEventListener('click', guard(async () => {
+  const movs = await api('GET', '/cash/movements');
+  $('#cashMovTable tbody').innerHTML = movs.map((x) => `<tr><td>${time(x.created_at)}</td><td class="${x.type === 'ingreso' ? 'pos' : 'neg'}">${x.type}</td><td>${x.method}</td><td class="num">${money(x.amount)}</td><td>${esc(x.concept)}</td><td>${esc(x.user_name || '')}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Sin movimientos</td></tr>';
+  $('#movListDialog').showModal();
 }));
+$('#movListClose').addEventListener('click', () => $('#movListDialog').close());
+$('#dockClose').addEventListener('click', () => { $('#closeForm').reset(); $('#expected').textContent = cash ? `Efectivo esperado: ${money(cash.expected_cash_now)}` : ''; $('#closeDialog').showModal(); $('#closeCounted').focus(); });
+$('#closeCancel').addEventListener('click', () => $('#closeDialog').close());
 $('#closeForm').addEventListener('submit', guard(async (e) => {
   e.preventDefault();
   if (!await uiConfirm('No se podrán registrar ventas hasta abrir una nueva.', { title: '¿Cerrar la caja?', ok: 'Cerrar caja', danger: true })) return;
   const r = await api('POST', '/cash/close', { counted: Number($('#closeCounted').value), note: $('#closeNote').value });
-  e.target.reset();
+  e.target.reset(); $('#closeDialog').close();
   await uiAlert(`Esperado: ${money(r.expected_cash)}\nContado: ${money(r.counted_cash)}\nDiferencia: ${money(r.difference)}`, 'Caja cerrada');
   await loadCash();
 }));
