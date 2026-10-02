@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync, chmodSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { browserCommand, openBrowser, probeInstance, portBusyMessage } from '../launch.js';
+import { browserCommand, openBrowser, probeInstance, portBusyMessage, appWindowCommand } from '../launch.js';
 import { appVersion } from '../db.js';
 import { start, copyProgram, runServer, launch, freePort } from './helpers.js';
 
@@ -96,4 +96,22 @@ test('el navegador no reutiliza código viejo: sin caché para la página y los 
     assert.equal((await fetch(t.base + '/no-existe.js')).status, 404);
     assert.equal((await fetch(t.base + '/img')).status, 404, 'una carpeta no es un archivo');
   } finally { t.close(); }
+});
+
+test('modo ventana de aplicación: Edge o Chrome en Windows, y navegador común si no hay', () => {
+  const env = { 'ProgramFiles(x86)': 'C:/PF86', ProgramFiles: 'C:/PF' };
+  const [exe, args] = appWindowCommand('http://localhost:3000', { platform: 'win32', env, exists: (p) => p.includes('PF86') && p.includes('msedge') });
+  assert.ok(exe.endsWith('msedge.exe'));
+  assert.ok(args.includes('--app=http://localhost:3000'));
+  assert.ok(appWindowCommand('http://x', { platform: 'win32', env, exists: (p) => p.includes('chrome') })[0].endsWith('chrome.exe'), 'sin Edge usa Chrome');
+  assert.equal(appWindowCommand('http://x', { platform: 'win32', env, exists: () => false }), null);
+  assert.equal(appWindowCommand('http://x', { platform: 'darwin', env, exists: () => true }), null);
+  const calls = [];
+  const spawnFn = (...a) => { calls.push(a); return { on() {}, unref() {} }; };
+  openBrowser('http://x', { platform: 'win32', spawnFn, appWindow: true, env, exists: () => false });
+  assert.equal(calls[0][0], 'rundll32', 'sin Edge ni Chrome abre el navegador predeterminado');
+  openBrowser('http://x', { platform: 'win32', spawnFn, appWindow: true, env, exists: (p) => p.includes('msedge') });
+  assert.ok(calls[1][0].endsWith('msedge.exe'));
+  openBrowser('http://x', { platform: 'win32', spawnFn, exists: () => true });
+  assert.equal(calls[2][0], 'rundll32', 'sin pedir ventana propia no se usa');
 });

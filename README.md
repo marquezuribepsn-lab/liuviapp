@@ -12,7 +12,9 @@ Sin dependencias: solo **Node.js 22.13+** (usa SQLite integrado).
 
 Así podés bajar un ZIP nuevo, extraerlo donde quieras o abrir el programa desde otra carpeta, y sigue todo igual. Al iniciar, el programa muestra la ubicación de la base, y también está en la pestaña *Copias*. Para elegir otra carpeta: variable de entorno `LIUVI_DATA_DIR`. Si venís de una versión que guardaba los datos en `data/` dentro del programa, se copian solos la primera vez (la original queda como respaldo).
 
-**En Windows**: hacé doble clic en `iniciar.bat`. Revisa que Node.js esté instalado, inicia el sistema y abre el navegador. No cierres esa ventana mientras vendés; para apagarlo, cerrala.
+**Instalador para Windows** (recomendado): `Liu-Vi-Setup-<versión>.exe`. Es un asistente de instalación clásico (Siguiente, Siguiente…) que incluye todo lo necesario —no hace falta instalar Node.js— y crea los accesos directos «Liu Vi» (escritorio y menú Inicio). Liu Vi se abre en su propia ventana, sin ventana negra, y corre en segundo plano: para cerrarlo del todo usá «Cerrar Liu Vi» del menú Inicio. Instalar encima de una versión anterior la actualiza y conserva todos los datos. Para generar el instalador: `installer/build.sh` (necesita `makensis`; ver el encabezado del script).
+
+**En Windows, sin instalar**: hacé doble clic en `iniciar.bat`. Revisa que Node.js esté instalado, inicia el sistema y abre el navegador. No cierres esa ventana mientras vendés; para apagarlo, cerrala.
 Para que arranque solo al prender la PC: botón derecho sobre `iniciar.bat` → *Crear acceso directo*, presioná `Win + R`, escribí `shell:startup` y pegá el acceso directo en esa carpeta.
 
 **En Mac**: hacé doble clic en `iniciar.command` (hace lo mismo que el `.bat`: revisa Node.js, inicia el sistema y abre el navegador). La primera vez macOS puede decir que viene de un desarrollador no identificado: botón derecho sobre el archivo → *Abrir* → *Abrir*. Si dice «permiso denegado», abrí Terminal en la carpeta y ejecutá `chmod +x iniciar.command`. Para que arranque solo: *Ajustes del Sistema → General → Ítems de inicio* y agregá `iniciar.command`.
@@ -27,7 +29,7 @@ npm test
 
 Casi siempre es que **la versión anterior sigue abierta**: su ventana negra no se cerró y, al abrir la nueva, el navegador se conecta a la vieja. Cómo comprobarlo y solucionarlo:
 
-- **Mirá la versión**: está al pie de todas las pantallas («Liu Vi v1.6.0»), en la pantalla de acceso y en la primera línea de la ventana negra. Si no es la que bajaste, estás viendo la vieja.
+- **Mirá la versión**: está al pie de todas las pantallas («Liu Vi v1.7.0»), en la pantalla de acceso y en la primera línea de la ventana negra. Si no es la que bajaste, estás viendo la vieja.
 - Si al abrir `iniciar.bat` la ventana negra dice **«ATENCION: ya hay OTRA COPIA de Liu Vi abierta… de una version distinta»**, cerrá la ventana negra anterior (la que dice la versión vieja) y volvé a abrir `iniciar.bat`. El navegador solo se abre cuando el programa arrancó bien, así que en ese caso no se abre.
 - El programa le indica al navegador que consulte siempre si hay archivos nuevos (los scripts y estilos llevan la versión en su dirección), y la página se recarga sola una vez si detecta que quedó guardada una versión anterior. Si aun así dudás, probá `Ctrl + F5`.
 
