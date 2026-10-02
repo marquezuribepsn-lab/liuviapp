@@ -187,6 +187,18 @@ export function openDb(path = defaultDbPath()) {
     CREATE INDEX IF NOT EXISTS idx_returns_sale ON returns(sale_id);
     CREATE INDEX IF NOT EXISTS idx_returns_created ON returns(created_at);
 
+    -- Ventas en espera: el carrito guardado (solo artículos y cantidades; precios y stock se leen al retomarla).
+    CREATE TABLE IF NOT EXISTS held_sales (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT, -- los números no se reutilizan: un «cobrar» viejo nunca borra otra venta en espera
+      user_id       INTEGER,
+      label         TEXT NOT NULL DEFAULT '',
+      customer_id   INTEGER REFERENCES customers(id),
+      customer_name TEXT NOT NULL DEFAULT '',
+      discount_pct  REAL NOT NULL DEFAULT 0,
+      items         TEXT NOT NULL,
+      created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+
     CREATE TABLE IF NOT EXISTS brands (
       id   INTEGER PRIMARY KEY,
       name TEXT NOT NULL UNIQUE COLLATE NOCASE

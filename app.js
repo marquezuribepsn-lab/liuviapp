@@ -360,6 +360,54 @@ export function createApp(db, opts = {}) {
   route('GET', '/api/cash/sessions', 'caja.ver', () =>
     db.prepare('SELECT * FROM cash_sessions ORDER BY id DESC LIMIT 60').all().map(sessionSummary));
 
+  // Ventas en espera
+  const MAX_HELD = 50;
+  const heldRow = (h) => {
+    let items = []; try { items = JSON.parse(h.items); } catch { /* vacío */ }
+    const priced = items.map((i) => ({ qty: i.qty, a: db.prepare('SELECT price FROM articles WHERE id=? AND active=1').get(i.article_id) }));
+    return { id: h.id, label: h.label, customer_id: h.customer_id, customer_name: h.customer_name, discount_pct: h.discount_pct, user_name: h.user_name ?? null, created_at: h.created_at,
+      units: items.reduce((s, i) => s + i.qty, 0), total: round2(priced.reduce((s, i) => s + (i.a ? i.a.price * i.qty : 0), 0) * (100 - h.discount_pct) / 100) };
+  };
+  route('GET', '/api/held', 'ventas.cobrar', () =>
+    db.prepare('SELECT h.*, u.name AS user_name FROM held_sales h LEFT JOIN users u ON u.id=h.user_id ORDER BY h.id').all().map(heldRow));
+  route('POST', '/api/held', 'ventas.cobrar', ({ body, user }) => tx(db, () => {
+    const items = Array.isArray(body.items) ? body.items : [];
+    if (!items.length) throw bad('La venta no tiene artículos');
+    const clean = items.map((i) => {
+      const qty = num(i.qty, 'Cantidad', { min: 1, int: true });
+      if (!db.prepare('SELECT 1 FROM articles WHERE id=? AND active=1').get(i.article_id)) throw new HttpError(404, `Artículo ${i.article_id} no encontrado`);
+      return { article_id: Number(i.article_id), qty };
+    });
+    const pct = num(body.discount_pct ?? 0, 'Descuento');
+    if (pct > 100) throw bad('Descuento inválido');
+    let customer = null;
+    if (body.customer_id) { customer = db.prepare('SELECT id,name FROM customers WHERE id=? AND active=1').get(body.customer_id); if (!customer) throw new HttpError(404, 'Cliente no encontrado'); }
+    if (body.replace_id) db.prepare('DELETE FROM held_sales WHERE id=?').run(body.replace_id); // se volvió a poner en espera una ya retomada
+    if (db.prepare('SELECT COUNT(*) AS n FROM held_sales').get().n >= MAX_HELD) throw new HttpError(409, `Hay demasiadas ventas en espera (máximo ${MAX_HELD}). Cobrá o descartá alguna.`);
+    const label = String(body.label ?? '').trim().slice(0, 60);
+    const customerName = customer ? customer.name : String(body.customer_name ?? '').trim().slice(0, 120);
+    const { lastInsertRowid: id } = db.prepare('INSERT INTO held_sales (user_id,label,customer_id,customer_name,discount_pct,items) VALUES (?,?,?,?,?,?)')
+      .run(user.id, label, customer?.id ?? null, customerName, pct, JSON.stringify(clean));
+    return { status: 201, data: heldRow({ ...db.prepare('SELECT * FROM held_sales WHERE id=?').get(id) }) };
+  }));
+  // Retomar: devuelve el carrito con los precios y el stock de ahora (lo que ya no existe se avisa). No la borra: se borra al cobrarla o descartarla.
+  route('GET', '/api/held/:id', 'ventas.cobrar', ({ params }) => {
+    const h = db.prepare('SELECT * FROM held_sales WHERE id=?').get(params.id);
+    if (!h) throw new HttpError(404, 'La venta en espera ya no existe (quizás ya se cobró)');
+    const items = [], missing = [];
+    for (const i of JSON.parse(h.items)) {
+      const a = db.prepare(`${ART} WHERE a.id=? AND a.active=1`).get(i.article_id);
+      if (a) items.push({ qty: i.qty, article: a }); else missing.push(i.article_id);
+    }
+    const customer = h.customer_id ? db.prepare(`${CUSTOMER_LIST} WHERE c.id=? AND c.active=1`).get(h.customer_id) : null;
+    return { id: h.id, label: h.label, discount_pct: h.discount_pct, customer_name: h.customer_name,
+      customer: customer ? { id: customer.id, name: customer.name, doc: customer.doc, balance: round2(customer.balance) } : null, items, missing: missing.length };
+  });
+  route('DELETE', '/api/held/:id', 'ventas.cobrar', ({ params }) => {
+    db.prepare('DELETE FROM held_sales WHERE id=?').run(params.id);
+    return { ok: true };
+  });
+
   // Clientes y cuenta corriente
   const money = (n) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(n);
   const customerBalance = (id) => round2(db.prepare('SELECT COALESCE(SUM(amount),0) AS b FROM account_movements WHERE customer_id=?').get(id).b);
@@ -518,6 +566,7 @@ export function createApp(db, opts = {}) {
           .run(saleId, a.id, label, qty, a.price, a.cost, a.brand);
         moveStock(a.id, -qty, 'venta', saleId, user.id);
       }
+      if (body.held_id) db.prepare('DELETE FROM held_sales WHERE id=?').run(body.held_id); // la venta en espera ya se cobró
       for (const p of finalPayments) {
         db.prepare('INSERT INTO sale_payments (sale_id,method,amount) VALUES (?,?,?)').run(saleId, p.method, p.amount);
         db.prepare('INSERT INTO cash_movements (session_id,type,method,amount,concept,sale_id,user_id) VALUES (?,?,?,?,?,?,?)')

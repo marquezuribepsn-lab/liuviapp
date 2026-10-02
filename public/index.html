@@ -74,6 +74,7 @@
       <div id="results" class="list"></div>
     </div>
     <div class="card">
+      <div id="heldBar" class="heldBar" hidden></div>
       <h2>Venta actual</h2>
       <table id="cart"><thead><tr><th>Artículo</th><th>Cant.</th><th>Precio</th><th>Subtotal</th><th></th></tr></thead><tbody></tbody></table>
       <div class="totals">
@@ -103,6 +104,7 @@
       <div id="change" class="muted"></div>
       <div class="row">
         <button id="charge" class="primary">Cobrar</button>
+        <button id="holdSale" class="ghost" title="Guarda esta venta para atender a otro cliente y retomarla después">⏸ Poner en espera</button>
         <button id="clearCart" class="ghost">Vaciar</button>
         <button id="lastTicket" class="ghost">Reimprimir último</button>
       </div>

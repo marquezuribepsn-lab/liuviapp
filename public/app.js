@@ -124,6 +124,52 @@ $('#useCredit').addEventListener('click', () => {
   updateChange();
 });
 
+// Ventas en espera: se guardan en el servidor (sobreviven a cerrar la pantalla) y se retoman con los precios y el stock de ahora.
+let heldId = null; // la venta en espera que se está cobrando (se borra sola al cobrarla)
+const ago = (iso) => { const m = Math.max(0, Math.round((Date.now() - new Date(iso.replace(' ', 'T')).getTime()) / 60000)); return m < 1 ? 'recién' : m < 60 ? `hace ${m} min` : m < 1440 ? `hace ${Math.round(m / 60)} h` : `hace ${Math.round(m / 1440)} d`; };
+async function loadHeld() {
+  const list = await api('GET', '/held');
+  $('#heldBar').hidden = !list.length;
+  $('#heldBar').innerHTML = list.map((h) => `<span class="heldChip${h.id === heldId ? ' on' : ''}">⏸ <b>${esc(h.label || h.customer_name || 'Venta ' + h.id)}</b>
+    <span class="muted">${h.units} prenda${h.units === 1 ? '' : 's'} · ${money(h.total)} · ${ago(h.created_at)}</span>
+    ${h.id === heldId ? '<span class="muted">(en pantalla)</span>' : `<button class="link" data-hresume="${h.id}">Retomar</button>`}<button class="link" data-hdrop="${h.id}" title="Descartar">✕</button></span>`).join('');
+}
+async function holdCart(label) {
+  await api('POST', '/held', {
+    label, replace_id: heldId || undefined, discount_pct: Number($('#discount').value) || 0, customer_id: saleCustomer?.id, customer_name: saleCustomer?.id ? undefined : saleCustomer?.name,
+    items: cart.map((l) => ({ article_id: l.a.id, qty: l.qty })),
+  });
+}
+$('#holdSale').addEventListener('click', guard(async () => {
+  if (!cart.length) throw new Error('No hay nada para poner en espera');
+  const label = prompt('Nombre para reconocer esta venta (opcional)', saleCustomer?.name || '');
+  if (label === null) return;
+  await holdCart(label.trim());
+  resetSale(); toast('Venta puesta en espera: retomala desde arriba cuando quieras'); await loadHeld();
+}));
+$('#heldBar').addEventListener('click', guard(async (e) => {
+  const drop = e.target.dataset.hdrop, resume = e.target.dataset.hresume;
+  if (drop && confirm('¿Descartar esta venta en espera? Se pierde el carrito guardado.')) {
+    await api('DELETE', '/held/' + drop);
+    if (Number(drop) === heldId) heldId = null;
+    return loadHeld();
+  }
+  if (!resume) return;
+  if (cart.length) {
+    if (!confirm('Tenés una venta en curso. ¿Ponerla en espera para retomar esta?')) return;
+    await holdCart(saleCustomer?.name || '');
+  }
+  const h = await api('GET', '/held/' + resume);
+  resetSale();
+  let capped = false;
+  cart = h.items.map((i) => { const qty = Math.min(i.qty, i.article.stock); if (qty < i.qty) capped = true; return { a: i.article, qty }; }).filter((l) => l.qty > 0);
+  $('#discount').value = h.discount_pct;
+  saleCustomer = h.customer ? { id: h.customer.id, name: h.customer.name, doc: h.customer.doc, balance: h.customer.balance } : h.customer_name ? { name: h.customer_name } : null;
+  heldId = h.id; renderCustomerChip(); renderCart();
+  if (h.missing || capped) toast(`${h.missing ? 'Algunos artículos ya no existen. ' : ''}${capped ? 'Se ajustaron cantidades al stock disponible.' : ''}`, true);
+  await loadHeld(); $('#scan').focus();
+}));
+
 // Cliente de la venta: con ficha (cuenta corriente, historial) o solo un nombre para el comprobante.
 let saleCustomer = null; // { id, name, doc, balance } | { name } | null
 const balanceHtml = (b) => (b > 0 ? `<span class="pos">${money(b)} a favor</span>` : b < 0 ? `<span class="neg">Debe ${money(-b)}</span>` : '<span class="muted">Sin saldo</span>');
@@ -171,7 +217,7 @@ async function refreshSaleCustomer() {
   if (c) { saleCustomer.balance = c.balance; renderCustomerChip(); }
 }
 function resetSale() {
-  cart = []; $('#discount').value = 0; saleCustomer = null; renderCustomerChip();
+  cart = []; heldId = null; $('#discount').value = 0; saleCustomer = null; renderCustomerChip();
   ['Efectivo', 'Tarjeta', 'Transferencia'].forEach((m) => ($('#pay' + m).value = ''));
   renderCart(); $('#results').innerHTML = ''; $('#scan').value = ''; $('#scan').focus();
 }
@@ -232,7 +278,7 @@ $('#charge').addEventListener('click', guard(async () => {
   const payments = paymentsEntered();
   const { total } = cartTotals();
   if (!payments.length && !accountEntered()) payments.push({ method: 'efectivo', amount: total }); // por defecto: efectivo exacto
-  const sale = await api('POST', '/sales', { items: cart.map((l) => ({ article_id: l.a.id, qty: l.qty })), discount_pct: Number($('#discount').value) || 0, payments, account_amount: accountEntered() || undefined, customer_id: saleCustomer?.id, customer_name: saleCustomer?.id ? undefined : saleCustomer?.name });
+  const sale = await api('POST', '/sales', { items: cart.map((l) => ({ article_id: l.a.id, qty: l.qty })), discount_pct: Number($('#discount').value) || 0, payments, held_id: heldId || undefined, account_amount: accountEntered() || undefined, customer_id: saleCustomer?.id, customer_name: saleCustomer?.id ? undefined : saleCustomer?.name });
   toast(`Venta #${sale.id} registrada${sale.change ? ` · Vuelto ${money(sale.change)}` : ''}`);
   resetSale(); await loadCash();
   const full = (await api('GET', '/sales')).find((x) => x.id === sale.id);
@@ -634,6 +680,7 @@ async function loadCash() {
       $('#cashMovTable tbody').innerHTML = movs.map((x) => `<tr><td>${time(x.created_at)}</td><td class="${x.type === 'ingreso' ? 'pos' : 'neg'}">${x.type}</td><td>${x.method}</td><td class="num">${money(x.amount)}</td><td>${esc(x.concept)}</td><td>${esc(x.user_name || '')}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Sin movimientos</td></tr>';
     }
   }
+  if (can('ventas.cobrar')) await loadHeld();
   const day = $('#salesDate').value || today();
   const sales = await api('GET', '/sales?date=' + day);
   $('#salesTable tbody').innerHTML = sales.map((s) => `<tr style="${s.voided ? 'opacity:.5;text-decoration:line-through' : ''}"><td>${compNumber(s)}</td><td>${time(s.created_at)}</td><td>${esc(s.seller || '')}${s.customer_name ? `<br><small class="muted">Cliente: ${esc(s.customer_name)}</small>` : ''}</td>
