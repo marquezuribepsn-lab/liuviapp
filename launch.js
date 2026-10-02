@@ -1,5 +1,7 @@
 // Apertura del navegador y detección de otra copia del programa ya abierta.
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 
 // Comando para abrir una dirección en el navegador predeterminado de cada sistema.
 export function browserCommand(platform, url) {
@@ -8,9 +10,22 @@ export function browserCommand(platform, url) {
   return ['xdg-open', [url]];
 }
 
-export function openBrowser(url, { platform = process.platform, spawnFn = spawn } = {}) {
+// Ventana propia sin pestañas ni barra de direcciones (modo «aplicación» de Edge o Chrome): se siente como un programa de escritorio.
+// Devuelve [exe, args] o null si no hay ninguno de los dos instalados.
+export function appWindowCommand(url, { platform = process.platform, env = process.env, exists = existsSync } = {}) {
+  if (platform !== 'win32') return null;
+  const roots = [env['ProgramFiles(x86)'], env.ProgramFiles, env.LOCALAPPDATA].filter(Boolean);
+  const rel = ['Microsoft\\Edge\\Application\\msedge.exe', 'Google\\Chrome\\Application\\chrome.exe'];
+  for (const r of rel) for (const root of roots) {
+    const exe = join(root, r.replaceAll('\\', '/'));
+    if (exists(exe)) return [exe, [`--app=${url}`, '--window-size=1366,820']];
+  }
+  return null;
+}
+
+export function openBrowser(url, { platform = process.platform, spawnFn = spawn, appWindow = false, env = process.env, exists = existsSync } = {}) {
   try {
-    const [cmd, args] = browserCommand(platform, url);
+    const [cmd, args] = (appWindow && appWindowCommand(url, { platform, env, exists })) || browserCommand(platform, url);
     const child = spawnFn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: true });
     child.on?.('error', () => {}); // sin navegador configurado: no pasa nada, se entra a mano
     child.unref?.();
