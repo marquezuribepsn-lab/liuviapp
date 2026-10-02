@@ -50,6 +50,7 @@
     <button data-tab="stock">Stock</button>
     <button data-tab="etiquetas">Etiquetas</button>
     <button data-tab="stats">Estadísticas</button>
+    <button data-tab="reportes">Reportes</button>
     <button data-tab="usuarios">Usuarios</button>
     <button data-tab="copias">Copias</button>
   </nav>
@@ -438,6 +439,35 @@
   <div class="card"><h2>Ventas por marca (período actual)</h2><table id="brandStatsTable"><tbody></tbody></table><p class="muted" style="margin:8px 0 0">Importes a precio de lista, antes de descuentos.</p></div>
   <div class="card"><h2>Ventas por vendedor (período actual)</h2><table id="sellerTable"><tbody></tbody></table></div>
   <table id="seriesTable"><thead><tr><th>Período</th><th>Ventas</th><th>Unidades</th><th>Total</th><th>Ticket prom.</th><th>Ganancia</th></tr></thead><tbody></tbody></table>
+</section>
+
+<!-- REPORTES -->
+<section id="reportes" class="tab" hidden>
+  <div class="card">
+    <h2>Reportes</h2>
+    <div class="row">
+      <label>Reporte<select id="repKind"></select></label>
+      <span id="repRange" class="row">
+        <label>Desde<input type="date" id="repFrom"></label>
+        <label>Hasta<input type="date" id="repTo"></label>
+      </span>
+    </div>
+    <div class="row" id="repPresets">
+      <button class="ghost" data-p="today">Hoy</button><button class="ghost" data-p="yesterday">Ayer</button><button class="ghost" data-p="week">Últimos 7 días</button>
+      <button class="ghost" data-p="month">Este mes</button><button class="ghost" data-p="lastmonth">Mes pasado</button><button class="ghost" data-p="year">Este año</button>
+    </div>
+    <div class="row">
+      <button id="repView" class="primary">Ver reporte</button>
+      <button id="repXlsx" class="ghost">Descargar Excel</button>
+      <button id="repPrint" class="ghost">Imprimir / guardar PDF</button>
+    </div>
+    <p class="error" id="repError"></p>
+  </div>
+  <div class="card" id="repCard" hidden>
+    <h2 id="repTitle" style="margin-bottom:2px"></h2><p class="muted" id="repSub" style="margin:0 0 10px"></p>
+    <div style="overflow-x:auto"><table id="repTable"><thead></thead><tbody></tbody><tfoot></tfoot></table></div>
+    <p class="muted" id="repCount" style="margin:8px 0 0"></p>
+  </div>
 </section>
 
 <!-- USUARIOS -->
