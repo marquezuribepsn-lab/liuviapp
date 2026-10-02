@@ -1753,6 +1753,22 @@ function startIdleWatch() {
   }, 15_000);
 }
 
+// Aviso «Respaldando» (abajo a la izquierda): consulta al servidor cada pocos segundos mientras hay sesión.
+let bbTimer = null;
+async function pollBackup() {
+  const bar = $('#backupBar');
+  try {
+    if (!me?.user || !$('#login').hidden) { bar.hidden = true; return; }
+    const st = await api('GET', '/backup/activity');
+    bar.hidden = !st.show;
+    bar.classList.toggle('done', st.show && !st.busy && st.ok);
+    bar.classList.toggle('fail', st.show && !st.busy && !st.ok);
+    $('#bbText').textContent = st.busy ? `Respaldando… ${st.phase ? '· ' + st.phase : ''}` : st.ok ? 'Respaldo listo ✓' : 'No se pudo respaldar';
+    bar.title = st.error || '';
+  } catch { /* sin conexión o sesión bloqueada: se reintenta */ }
+}
+function startBackupWatch() { clearInterval(bbTimer); pollBackup(); bbTimer = setInterval(pollBackup, 3000); }
+
 // ---------- Inicio ----------
 async function boot() {
   me = await api('GET', '/auth/me');
@@ -1770,7 +1786,7 @@ async function boot() {
   if (!me.user) return showLogin(me.setupNeeded);
   $('#login').hidden = true; document.body.classList.remove('locked');
   $('#userName').textContent = me.user.name; $('#userRole').textContent = `(${me.user.role})`;
-  appReady = true; startIdleWatch();
+  appReady = true; startIdleWatch(); startBackupWatch();
   document.body.classList.toggle('nocost', !can('costos.ver'));
   $('#adjCard').hidden = !can('stock.ajustar');
   $('#clearCard').hidden = !can('stock.limpiar');

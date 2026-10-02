@@ -10,7 +10,8 @@ import { createApp } from '../app.js';
 // Servidor en memoria. `client()` devuelve un cliente HTTP con su propio cookie jar (una sesión).
 export async function start(opts = {}) {
   const db = openDb(':memory:');
-  const server = createServer(createApp(db, opts));
+  const app = createApp(db, opts);
+  const server = createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${server.address().port}`;
   const client = () => {
@@ -35,7 +36,7 @@ export async function start(opts = {}) {
   // Cliente con el primer administrador ya creado y la sesión iniciada.
   const admin = client();
   await admin.call('POST', '/api/auth/setup', { username: 'admin', name: 'Admin', password: 'clave-segura-1' });
-  return { db, base, client, admin: admin.call, adminRaw: admin.raw, close: () => server.close() };
+  return { db, app, base, client, admin: admin.call, adminRaw: admin.raw, close: () => server.close() };
 }
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');

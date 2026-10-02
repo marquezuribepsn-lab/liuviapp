@@ -12,8 +12,10 @@ const DEFAULT_TIMES = ['22:00'];
 const REQUIRED_TABLES = ['users', 'roles', 'articles', 'sales', 'settings', 'cash_sessions'];
 
 const stamp = () => new Date().toLocaleString('sv-SE').replace(' ', '_').replaceAll(':', '-');
-const ymd = (d) => d.toLocaleDateString('sv-SE');
-const hm = (d) => d.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' });
+// Hora local armada a mano (no depende del idioma/ICU de cada instalación).
+const p2 = (n) => String(n).padStart(2, '0');
+const ymd = (d) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+const hm = (d) => `${p2(d.getHours())}:${p2(d.getMinutes())}`;
 
 // Horarios de las copias automáticas: lista de «HH:MM» sin repetir y ordenada.
 export function normalizeTimes(v) {
@@ -78,7 +80,23 @@ export function createBackups(db, { gdrive = null, defaultDir = null } = {}) {
     } finally { copy.close(); }
   }
 
+  // Estado visible en pantalla: la copia local es instantánea, así que el aviso se mantiene unos segundos y mientras sube a Drive.
+  const activity = { active: 0, reason: '', phase: '', until: 0, ok: true, error: '', seq: 0 };
+  const SHOW_MS = 6000;
+  function begin(reason, phase) { activity.active++; activity.reason = reason; activity.phase = phase; activity.until = Date.now() + SHOW_MS; activity.seq++; }
+  function end(ok, error = '') { activity.active = Math.max(0, activity.active - 1); activity.ok = ok; activity.error = error; activity.until = Date.now() + SHOW_MS; }
+  function activityStatus() {
+    check(); // el aviso de la pantalla también sirve de latido: si el reloj interno se retrasó, se pone al día
+    const busy = activity.active > 0, recent = Date.now() < activity.until;
+    return { busy, show: busy || (recent && activity.seq > 0), phase: busy ? activity.phase : '', reason: activity.reason, ok: activity.ok, error: activity.error, seq: activity.seq };
+  }
+
   function run(reason = 'manual') {
+    begin(reason, 'Copiando los datos');
+    try { return runInner(reason); }
+    catch (e) { end(false, e.message); throw e; }
+  }
+  function runInner(reason) {
     const dir = dirOf();
     if (!dir) throw new Error('Primero elegí la carpeta de copias');
     ensureDir(dir);
@@ -95,7 +113,12 @@ export function createBackups(db, { gdrive = null, defaultDir = null } = {}) {
     set('backup_last_reason', reason);
     set('backup_error', '');
     prune(dir);
-    gdrive?.enqueue(file);
+    if (gdrive?.status().connected) {
+      activity.phase = 'Subiendo a Google Drive';
+      activity.active++; // la subida sigue después de devolver la copia local
+      Promise.resolve(gdrive.enqueue(file)).then(() => end(true), (e) => end(false, e.message));
+    }
+    end(true);
     return file;
   }
 
@@ -236,5 +259,5 @@ export function createBackups(db, { gdrive = null, defaultDir = null } = {}) {
     return restoreFromFile(join(dir, name));
   }
 
-  return { run, tryRun, status, configure, start, dirOf, check, keepCount, restoreFromFile, restoreLocal, validateBackup };
+  return { run, tryRun, activityStatus, status, configure, start, dirOf, check, keepCount, restoreFromFile, restoreLocal, validateBackup };
 }

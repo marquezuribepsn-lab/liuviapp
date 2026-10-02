@@ -52,7 +52,7 @@ test('la copia es una base válida con los datos y se hace sola al cerrar caja',
     await new Promise((r) => setTimeout(r, 1100)); // el nombre lleva segundos
     await t.admin('POST', '/api/cash/open', { amount: 0 });
     await t.admin('POST', '/api/cash/close', { counted: 0 });
-    assert.equal(backups(dir).length, 2);
+    assert.equal(readdirSync(dir).filter((f) => f.startsWith('liuvi-backup-')).length, 2);
     assert.equal((await t.admin('GET', '/api/backup')).data.last_reason, 'cierre de caja');
 
     // Con las copias automáticas apagadas, el cierre no copia
@@ -60,7 +60,7 @@ test('la copia es una base válida con los datos y se hace sola al cerrar caja',
     await new Promise((r) => setTimeout(r, 1100));
     await t.admin('POST', '/api/cash/open', { amount: 0 });
     await t.admin('POST', '/api/cash/close', { counted: 0 });
-    assert.equal(backups(dir).length, 2);
+    assert.equal(readdirSync(dir).filter((f) => f.startsWith('liuvi-backup-')).length, 2);
   } finally { t.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -110,4 +110,23 @@ test('restaurar: reemplaza la base, guarda la anterior y rechaza archivos invál
     assert.equal(again.status, 0);
     assert.ok(readdirSync(join(work, 'data')).some((f) => f.includes('antes-de-restaurar')));
   } finally { rmSync(dir, { recursive: true, force: true }); rmSync(work, { recursive: true, force: true }); }
+});
+
+test('copia programada: se dispara en el horario y el aviso «Respaldando» queda visible', async () => {
+  const t = await start();
+  const dir = tmp();
+  try {
+    await t.admin('PUT', '/api/backup', { dir, times: ['08:00', '20:00'] });
+    const b = t.app.backups;
+    const at = (h, m) => { const d = new Date(); d.setHours(h, m, 0, 0); return d; };
+    assert.ok(b.check(at(12, 0)), 'pasadas las 08:00 se hace la copia sola');
+    assert.equal(b.check(at(12, 5)), null, 'no repite en el mismo horario');
+    assert.ok(b.check(at(23, 0)), 'pasadas las 20:00 se hace otra copia');
+    assert.equal(readdirSync(dir).filter((f) => f.startsWith('liuvi-backup-')).length, 2);
+    assert.equal(b.check(at(23, 30)), null, 'no repite en el mismo horario');
+    const act = (await t.client().call('GET', '/api/backup/activity')).data;
+    assert.equal(act.show, true);
+    assert.equal(act.ok, true);
+    assert.equal(act.error, undefined);
+  } finally { t.close(); rmSync(dir, { recursive: true, force: true }); }
 });
