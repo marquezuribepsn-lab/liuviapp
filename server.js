@@ -21,9 +21,24 @@ if (!process.env.DB_PATH) {
 const db = openDb();
 clearSessionsIfRequired(db); // al abrir el programa hay que iniciar sesión (configurable por el administrador)
 let server;
-const app = createApp(db, { restart: () => relaunchServer({ appDir: APP_DIR, port, closeServer: () => server.close() }) });
+// Con el instalador (LIUVI_AUTOEXIT=1): cuando se cierra la ventana, el programa se cierra solo (no queda node.exe abierto).
+const autoExit = process.env.LIUVI_AUTOEXIT === '1';
+let lastBeat = 0, byeAt = 0;
+const onWindow = (kind) => { lastBeat = Date.now(); byeAt = kind === 'bye' ? Date.now() : 0; };
+const app = createApp(db, { onWindow, restart: () => relaunchServer({ appDir: APP_DIR, port, closeServer: () => server.close() }) });
 app.backups.start();
 app.updater.start();
+if (autoExit) {
+  const started = Date.now();
+  setInterval(() => {
+    const now = Date.now();
+    const gone = lastBeat ? (byeAt ? now - byeAt > 10_000 : now - lastBeat > 150_000) : now - started > 180_000; // nunca abrieron la ventana
+    if (!gone) return;
+    console.log('Ventana cerrada: se cierra Liu Vi.');
+    try { app.backups.tryRun('cierre del programa'); } catch { /* sigue */ }
+    process.exit(0);
+  }, 5000).unref?.();
+}
 server = createServer(app);
 server.keepAliveTimeout = 65_000; // evita cortar conexiones que el navegador reutiliza
 server.requestTimeout = 5 * 60_000; // importaciones y restauraciones grandes pueden tardar

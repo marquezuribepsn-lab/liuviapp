@@ -1651,6 +1651,7 @@ export function createApp(db, opts = {}) {
 
   // ---------- Copias de seguridad ----------
   const BACKUP = 'sistema.copias';
+  passive('POST', '/api/window/:kind', (ctx) => { opts.onWindow?.(ctx.params.kind); return { ok: true }; }); // latido de la ventana: si se cierra, el programa se cierra solo
   passive('GET', '/api/backup/activity', () => { const { error, ...st } = backups.activityStatus(); return st; }); // solo el aviso «Respaldando»; pública para no contar como actividad del usuario (bloqueo por inactividad)
   route('GET', '/api/backup', BACKUP, () => backups.status());
   route('PUT', '/api/backup', BACKUP, ({ body }) => {

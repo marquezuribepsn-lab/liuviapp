@@ -2279,6 +2279,12 @@ async function pollBackup() {
 }
 function startBackupWatch() { clearInterval(bbTimer); pollBackup(); bbTimer = setInterval(pollBackup, 3000); }
 
+// Latido: avisa al programa que la ventana sigue abierta (si se cierra, el programa se cierra solo).
+const beat = (kind) => { try { fetch('/api/window/' + kind, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', keepalive: true }).catch(() => {}); } catch { /* sin red */ } };
+beat('ping'); setInterval(() => beat('ping'), 10_000);
+addEventListener('pagehide', () => beat('bye'));
+addEventListener('pageshow', () => beat('ping'));
+
 // ---------- Inicio ----------
 async function boot() {
   me = await api('GET', '/auth/me');

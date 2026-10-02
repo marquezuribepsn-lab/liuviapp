@@ -72,6 +72,7 @@ With sh.Environment("Process")
   .Item("LIUVI_APP_WINDOW") = "1"
   .Item("LIUVI_SILENT") = "1"
   .Item("LIUVI_UPDATE") = "1"
+  .Item("LIUVI_AUTOEXIT") = "1"
   .Item("LIUVI_LOGFILE") = datos & "\liuvi.log"
 End With
 sh.CurrentDirectory = dir
