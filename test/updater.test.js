@@ -118,3 +118,13 @@ test('actualizar: sin internet se avisa claro y en la API solo lo usa el adminis
     assert.equal((await t.admin('PUT', '/api/update', { auto: false })).data.auto, false);
   } finally { t.close(); rmSync(dir2, { recursive: true, force: true }); }
 });
+
+test('actualizar: si la versión nueva pide un Node más nuevo que el instalado, se rechaza', async () => {
+  const dir = installedDir(), db = openDb(':memory:');
+  try {
+    const zip = newVersionZip('99.0.0', (f) => (f.name.endsWith('/package.json') ? { ...f, data: JSON.stringify({ ...JSON.parse(f.data), engines: { node: '>=99.0' } }) } : f));
+    const up = createUpdater(db, { appDir: dir, version: '1.0.0', enabled: true, fetchFn: fakeFetch('99.0.0', zip) });
+    await assert.rejects(() => up.apply(), /motor más nuevo/);
+    assert.equal(readFileSync(join(dir, 'app.js'), 'utf8'), '// version vieja');
+  } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
+});

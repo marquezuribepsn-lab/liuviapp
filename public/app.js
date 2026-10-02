@@ -84,7 +84,7 @@ function showTab(name) {
   if (name === 'venta') { $('#scan').focus(); refreshOffers(); }
 }
 // Qué sección abre cada botón de la barra principal (el último grupo visitado recuerda su sección).
-const tabOfButton = (b) => b.dataset.tab || (lastInGroup[b.dataset.group] && tabAllowed(lastInGroup[b.dataset.group]) ? lastInGroup[b.dataset.group] : GROUPS[b.dataset.group].find(tabAllowed));
+const tabOfButton = (b) => (b.dataset.tab ? (tabAllowed(b.dataset.tab) ? b.dataset.tab : null) : (lastInGroup[b.dataset.group] && tabAllowed(lastInGroup[b.dataset.group]) ? lastInGroup[b.dataset.group] : GROUPS[b.dataset.group].find(tabAllowed)));
 $('#subTabs').addEventListener('click', (e) => e.target.dataset.tab && showTab(e.target.dataset.tab));
 $('#tabs').addEventListener('click', (e) => { const b = e.target.closest('button'); const t = b && tabOfButton(b); if (t) showTab(t); });
 

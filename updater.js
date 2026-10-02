@@ -77,7 +77,14 @@ export function createUpdater(db, { appDir, version, enabled = false, repo = DEF
   // La versión nueva tiene que poder arrancar: sintaxis de cada archivo y una base en memoria.
   function verify(dir, expected) {
     for (const f of ['server.js', 'app.js', 'db.js', 'package.json', 'public/index.html', 'public/app.js']) if (!existsSync(join(dir, f))) throw new Error(`La actualización está incompleta (falta ${f})`);
-    if (JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).version !== expected) throw new Error('La versión descargada no es la esperada');
+    const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
+    if (pkg.version !== expected) throw new Error('La versión descargada no es la esperada');
+    // Si la versión nueva pide un Node más nuevo que el que trae el programa instalado, hace falta el instalador completo.
+    const need = /(\d+)\.(\d+)/.exec(pkg.engines?.node || '');
+    if (need) {
+      const [maj, min] = process.versions.node.split('.').map(Number);
+      if (maj < Number(need[1]) || (maj === Number(need[1]) && min < Number(need[2]))) throw new Error(`Esta versión necesita un motor más nuevo (Node ${need[1]}.${need[2]}): instalala con el instalador completo (Liu-Vi-Setup)`);
+    }
     for (const f of readdirSync(dir).filter((n) => n.endsWith('.js'))) {
       const r = spawnSync(process.execPath, ['--check', join(dir, f)], { encoding: 'utf8' });
       if (r.status !== 0) throw new Error(`La actualización tiene un error en ${f}`);
@@ -150,13 +157,19 @@ export function createUpdater(db, { appDir, version, enabled = false, repo = DEF
 }
 
 // Reinicia el sistema ya actualizado: un proceso auxiliar espera a que éste suelte el puerto y levanta el nuevo.
-export function relaunchServer({ appDir, closeServer, env = process.env, platform = process.platform } = {}) {
+export function relaunchServer({ appDir, closeServer, port = Number(process.env.PORT) || 3000, env = process.env } = {}) {
   const logFile = env.LIUVI_LOGFILE;
   let out = 'ignore';
   try { if (logFile) out = openSync(logFile, 'a'); } catch { /* sin registro */ }
   const childEnv = { ...env, LIUVI_OPEN: '0' }; // la ventana que ya está abierta se recarga sola
-  const script = "setTimeout(()=>{require('child_process').spawn(process.execPath,['--disable-warning=ExperimentalWarning','server.js'],{cwd:process.argv[1],detached:true,stdio:['ignore','inherit','inherit'],windowsHide:true,env:process.env}).unref()},2500)";
-  const helper = spawn(process.execPath, ['-e', script, appDir], { detached: true, stdio: ['ignore', out, out], windowsHide: true, env: childEnv });
+  const script = `
+    const net = require('net'), { spawn } = require('child_process');
+    const [dir, port] = [process.argv[1], Number(process.argv[2])];
+    let tries = 0;
+    const launch = () => { spawn(process.execPath, ['--disable-warning=ExperimentalWarning', 'server.js'], { cwd: dir, detached: true, stdio: ['ignore', 'inherit', 'inherit'], windowsHide: true, env: process.env }).unref(); setTimeout(() => process.exit(0), 300); };
+    const check = () => { const s = net.connect(port, '127.0.0.1'); s.on('connect', () => { s.destroy(); if (++tries < 40) setTimeout(check, 500); else launch(); }); s.on('error', launch); };
+    setTimeout(check, 700);`;
+  const helper = spawn(process.execPath, ['-e', script, appDir, String(port)], { detached: true, stdio: ['ignore', out, out], windowsHide: true, env: childEnv });
   helper.unref();
   setTimeout(() => { try { closeServer?.(); } catch { /* ya cerrado */ } process.exit(0); }, 500);
 }
