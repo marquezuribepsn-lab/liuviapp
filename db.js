@@ -279,6 +279,8 @@ export function openDb(path = defaultDbPath()) {
   ensureColumn('sales', 'customer_name');
   ensureColumn('sales', 'customer_doc');
   ensureColumn('sales', 'customer_id');
+  ensureColumn('sales', 'surcharge', 'REAL NOT NULL DEFAULT 0'); // recargo (por ejemplo, costo de la tarjeta)
+  ensureColumn('held_sales', 'adjust', "TEXT NOT NULL DEFAULT ''"); // descuento y recargo de la venta en espera (JSON)
   ensureColumn('sales', 'prepaid_amount', 'REAL NOT NULL DEFAULT 0'); // parte de la venta ya cobrada como seña de un apartado
   ensureColumn('sales', 'exchange_amount', 'REAL NOT NULL DEFAULT 0'); // parte de la venta cubierta por mercadería devuelta (cambio)
   ensureColumn('sales', 'account_amount', 'REAL NOT NULL DEFAULT 0'); // parte de la venta pagada con la cuenta del cliente

@@ -87,11 +87,28 @@ async function refreshCash() {
 
 // ---------- Venta ----------
 let cart = [];
+// Descuento y recargo, cada uno por porcentaje o por monto. El descuento va sobre el subtotal; el recargo, sobre lo que queda.
+const adj = { dType: 'pct', sType: 'pct' };
+const r2 = (n) => Math.round(n * 100) / 100;
+const adjustBody = () => {
+  const d = Math.max(0, Number($('#discVal').value) || 0), sv = Math.max(0, Number($('#sureVal').value) || 0);
+  return { discount_pct: adj.dType === 'pct' ? d : 0, discount_amount: adj.dType === 'amt' ? d : 0, surcharge_pct: adj.sType === 'pct' ? sv : 0, surcharge_amount: adj.sType === 'amt' ? sv : 0 };
+};
+function setAdjust(a = {}) {
+  const d = a.discount_amount > 0 ? ['amt', a.discount_amount] : ['pct', a.discount_pct || 0];
+  const sv = a.surcharge_amount > 0 ? ['amt', a.surcharge_amount] : ['pct', a.surcharge_pct || 0];
+  adj.dType = d[0]; adj.sType = sv[0];
+  $('#discVal').value = d[1] || ''; $('#sureVal').value = sv[1] || '';
+  for (const [id, t] of [['#discType', adj.dType], ['#sureType', adj.sType]]) $$(id + ' button').forEach((b) => b.classList.toggle('active', b.dataset.t === t));
+}
+const hasAdjust = () => { const a = adjustBody(); return a.discount_pct + a.discount_amount + a.surcharge_pct + a.surcharge_amount > 0; };
 const cartTotals = () => {
-  const subtotal = cart.reduce((s, l) => s + l.a.price * l.qty, 0);
-  const pct = Math.min(100, Math.max(0, Number($('#discount').value) || 0));
-  const total = Math.round(subtotal * (100 - pct)) / 100;
-  return { subtotal, total };
+  const subtotal = r2(cart.reduce((s, l) => s + l.a.price * l.qty, 0));
+  const a = adjustBody();
+  const discount = Math.min(subtotal, a.discount_amount > 0 ? a.discount_amount : r2(subtotal * Math.min(100, a.discount_pct) / 100));
+  const base = r2(subtotal - discount);
+  const surcharge = a.surcharge_amount > 0 ? a.surcharge_amount : r2(base * Math.min(100, a.surcharge_pct) / 100);
+  return { subtotal, discount, surcharge, total: r2(base + surcharge) };
 };
 function renderCart() {
   $('#cart tbody').innerHTML = cart.map((l, i) => `
@@ -99,20 +116,48 @@ function renderCart() {
     <td><button class="link" data-q="${i}:-1">−</button> ${l.qty} <button class="link" data-q="${i}:1">+</button></td>
     <td class="num">${money(l.a.price)}</td><td class="num">${money(l.a.price * l.qty)}</td>
     <td><button class="link" data-rm="${i}">✕</button></td></tr>`).join('') || '<tr><td colspan="5" class="muted">Escaneá un artículo para empezar</td></tr>';
-  const { subtotal, total } = cartTotals();
+  const { subtotal, discount, surcharge, total } = cartTotals();
   $('#subtotal').textContent = money(subtotal);
+  $('#discLine').hidden = !(discount > 0); $('#discShow').textContent = '− ' + money(discount);
+  $('#sureLine').hidden = !(surcharge > 0); $('#sureShow').textContent = '+ ' + money(surcharge);
   $('#total').textContent = money(total);
   updateChange();
 }
-function paymentsEntered() {
-  return ['Efectivo', 'Tarjeta', 'Transferencia'].map((m) => ({ method: m.toLowerCase(), amount: Number($('#pay' + m).value) || 0 })).filter((p) => p.amount > 0);
+
+// Cobro: una o más líneas «medio + monto». La última línea sin monto cobra lo que falta.
+const PAY_LABEL = { efectivo: 'Efectivo', tarjeta: 'Tarjeta', transferencia: 'Transferencia', cuenta: 'Cuenta corriente / saldo del cliente' };
+let payLines = [{ method: 'efectivo', amount: '' }];
+function renderPayLines() {
+  const methods = ['efectivo', 'tarjeta', 'transferencia', ...(saleCustomer?.id ? ['cuenta'] : [])];
+  for (const l of payLines) if (!methods.includes(l.method)) l.method = 'efectivo'; // se quitó el cliente: ya no hay cuenta
+  $('#payLines').innerHTML = payLines.map((l, i) => `<div class="payLine">
+    <select data-pm="${i}" aria-label="Medio de pago">${methods.map((m) => `<option value="${m}"${m === l.method ? ' selected' : ''}>${PAY_LABEL[m]}</option>`).join('')}</select>
+    <input data-pa="${i}" type="number" min="0" step="0.01" inputmode="decimal" value="${l.amount}" aria-label="Monto">
+    ${payLines.length > 1 ? `<button type="button" class="link" data-prm="${i}" title="Quitar">✕</button>` : '<span></span>'}</div>`).join('');
+  updateChange();
 }
-const accountEntered = () => (saleCustomer?.id ? Number($('#payCuenta').value) || 0 : 0);
+function effectivePays() {
+  const total = cartTotals().total, last = payLines.length - 1;
+  const typed = payLines.map((l) => Math.max(0, Number(l.amount) || 0));
+  const others = typed.reduce((sum, v, i) => (i === last ? sum : sum + v), 0);
+  return payLines.map((l, i) => ({ method: l.method, amount: i === last && !typed[i] ? Math.max(0, r2(total - others)) : typed[i] }));
+}
+const paymentsEntered = () => effectivePays().filter((p) => p.method !== 'cuenta' && p.amount > 0);
+const accountEntered = () => (saleCustomer?.id ? r2(effectivePays().filter((p) => p.method === 'cuenta').reduce((sum, p) => sum + p.amount, 0)) : 0);
+function setPayLines(lines) { payLines = lines.length ? lines : [{ method: 'efectivo', amount: '' }]; renderPayLines(); }
 function updateChange() {
   const { total } = cartTotals();
-  const paid = paymentsEntered().reduce((s, p) => s + p.amount, 0) + accountEntered();
-  const diff = Math.round((paid - total) * 100) / 100;
-  $('#change').textContent = !cart.length ? '' : diff >= 0 ? `Vuelto: ${money(diff)}` : `Falta cobrar: ${money(-diff)}`;
+  const eff = effectivePays();
+  const paid = r2(eff.reduce((sum, p) => sum + p.amount, 0)), diff = r2(paid - total);
+  const hasCash = eff.some((p) => p.method === 'efectivo' && p.amount > 0);
+  // El monto que se va a cobrar se ve en gris dentro de la última línea mientras no se escribe otro.
+  $$('#payLines input[data-pa]').forEach((inp, i) => { inp.placeholder = i === payLines.length - 1 ? String(eff[i]?.amount || 0) : '0'; });
+  const st = $('#payStatus');
+  if (!cart.length) { st.className = 'payStatus'; st.textContent = ''; }
+  else if (diff < 0) { st.className = 'payStatus falta'; st.textContent = `Falta cobrar ${money(-diff)}`; }
+  else if (diff > 0) { st.className = 'payStatus ' + (hasCash ? 'vuelto' : 'falta'); st.textContent = hasCash ? `Vuelto ${money(diff)}` : `El pago supera el total en ${money(diff)}`; }
+  else { st.className = 'payStatus ok'; st.textContent = 'Pago completo ✓'; }
+  $('#charge').textContent = cart.length ? `Cobrar ${money(total)}` : 'Cobrar';
 }
 // Sonido corto de confirmación (agudo = agregado, grave = error): se puede cobrar sin mirar la pantalla.
 let audioCtx = null;
@@ -143,17 +188,44 @@ $('#cart').addEventListener('click', (e) => {
     renderCart();
   } else if (rm !== undefined) { cart.splice(Number(rm), 1); renderCart(); }
 });
-$('#discount').addEventListener('input', renderCart);
-['Efectivo', 'Tarjeta', 'Transferencia', 'Cuenta'].forEach((m) => $('#pay' + m).addEventListener('input', updateChange));
-$$('[data-full]').forEach((b) => b.addEventListener('click', () => {
-  ['Efectivo', 'Tarjeta', 'Transferencia'].forEach((m) => ($('#pay' + m).value = ''));
-  $('#pay' + b.dataset.full).value = Math.max(0, Math.round((cartTotals().total - accountEntered()) * 100) / 100) || '';
-  updateChange();
-}));
-$('#useCredit').addEventListener('click', () => {
-  $('#payCuenta').value = Math.min(saleCustomer?.balance || 0, cartTotals().total) || '';
-  updateChange();
+for (const [sel, key] of [['#discType', 'dType'], ['#sureType', 'sType']]) {
+  $(sel).addEventListener('click', (e) => {
+    if (!e.target.dataset.t) return;
+    adj[key] = e.target.dataset.t;
+    $$(sel + ' button').forEach((b) => b.classList.toggle('active', b === e.target));
+    renderCart();
+  });
+}
+$('#discVal').addEventListener('input', renderCart);
+$('#sureVal').addEventListener('input', renderCart);
+$('#payLines').addEventListener('input', (e) => {
+  if (e.target.dataset.pa !== undefined) { payLines[e.target.dataset.pa].amount = e.target.value; updateChange(); }
 });
+$('#payLines').addEventListener('change', (e) => {
+  if (e.target.dataset.pm !== undefined) { payLines[e.target.dataset.pm].method = e.target.value; updateChange(); }
+});
+$('#payLines').addEventListener('click', (e) => {
+  if (e.target.dataset.prm !== undefined) { payLines.splice(Number(e.target.dataset.prm), 1); renderPayLines(); }
+});
+$('#payAdd').addEventListener('click', () => {
+  const used = new Set(payLines.map((l) => l.method));
+  const next = ['efectivo', 'tarjeta', 'transferencia', ...(saleCustomer?.id ? ['cuenta'] : [])].find((m) => !used.has(m)) || 'efectivo';
+  payLines.push({ method: next, amount: '' });
+  renderPayLines();
+  const first = $('#payLines input[data-pa]'); if (first && !first.value) first.focus(); // se escribe cuánto paga con el primero; el último cobra el resto
+});
+// Menú «＋» con las acciones menos usadas (señar, poner en espera, reimprimir, vaciar).
+const closeMore = () => { $('#moreMenu').hidden = true; $('#moreBtn').setAttribute('aria-expanded', 'false'); };
+$('#moreBtn').addEventListener('click', (e) => { e.stopPropagation(); const open = $('#moreMenu').hidden; $('#moreMenu').hidden = !open; $('#moreBtn').setAttribute('aria-expanded', String(open)); });
+$('#moreMenu').addEventListener('click', closeMore);
+document.addEventListener('click', (e) => { if (!e.target.closest('.moreWrap')) closeMore(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMore(); });
+function useCredit() {
+  const total = cartTotals().total, bal = saleCustomer?.balance || 0;
+  if (!(bal > 0)) return;
+  const use = Math.min(bal, total);
+  setPayLines(use >= total ? [{ method: 'cuenta', amount: '' }] : [{ method: 'cuenta', amount: use }, { method: 'efectivo', amount: '' }]);
+}
 
 // Ventas en espera: se guardan en el servidor (sobreviven a cerrar la pantalla) y se retoman con los precios y el stock de ahora.
 let heldId = null; // la venta en espera que se está cobrando (se borra sola al cobrarla)
@@ -167,7 +239,7 @@ async function loadHeld() {
 }
 async function holdCart(label) {
   await api('POST', '/held', {
-    label, replace_id: heldId || undefined, discount_pct: Number($('#discount').value) || 0, customer_id: saleCustomer?.id, customer_name: saleCustomer?.id ? undefined : saleCustomer?.name,
+    label, replace_id: heldId || undefined, adjust: adjustBody(), customer_id: saleCustomer?.id, customer_name: saleCustomer?.id ? undefined : saleCustomer?.name,
     items: cart.map((l) => ({ article_id: l.a.id, qty: l.qty })),
   });
 }
@@ -194,7 +266,7 @@ $('#heldBar').addEventListener('click', guard(async (e) => {
   resetSale();
   let capped = false;
   cart = h.items.map((i) => { const qty = Math.min(i.qty, avail(i.article)); if (qty < i.qty) capped = true; return { a: i.article, qty }; }).filter((l) => l.qty > 0);
-  $('#discount').value = h.discount_pct;
+  setAdjust(h.adjust || { discount_pct: h.discount_pct }); renderCart();
   saleCustomer = h.customer ? { id: h.customer.id, name: h.customer.name, doc: h.customer.doc, balance: h.customer.balance } : h.customer_name ? { name: h.customer_name } : null;
   heldId = h.id; renderCustomerChip(); renderCart();
   if (h.missing || capped) toast(`${h.missing ? 'Algunos artículos ya no existen. ' : ''}${capped ? 'Se ajustaron cantidades al stock disponible.' : ''}`, true);
@@ -208,11 +280,9 @@ function renderCustomerChip() {
   const c = saleCustomer, chip = $('#custChip');
   $('#custSearch').closest('label').hidden = !!c;
   chip.hidden = !c; $('#custResults').innerHTML = '';
-  $('#payCuentaWrap').hidden = !c?.id;
-  $('#useCredit').hidden = !(c?.id && c.balance > 0);
-  if (!c?.id) $('#payCuenta').value = '';
+  renderPayLines();
   if (c) chip.innerHTML = `<span>👤 <b>${esc(c.name)}</b>${c.doc ? ` · ${esc(c.doc)}` : ''}</span>${c.id ? balanceHtml(c.balance) : '<span class="muted">(sin ficha)</span>'}
-    <span class="grow"></span>${c.id && can('clientes.cuenta') ? '<button type="button" class="ghost" id="custSena">Cargar seña</button>' : ''}<button type="button" class="link" id="custClear" title="Quitar cliente">✕</button>`;
+    <span class="grow"></span>${c.id && c.balance > 0 ? '<button type="button" class="ghost" id="custUse">Usar saldo</button>' : ''}${c.id && can('clientes.cuenta') ? '<button type="button" class="ghost" id="custSena">Cargar seña</button>' : ''}<button type="button" class="link" id="custClear" title="Quitar cliente">✕</button>`;
   updateChange();
 }
 function setSaleCustomer(c) { saleCustomer = c; accountAsked = false; renderCustomerChip(); $('#scan').focus(); }
@@ -234,6 +304,7 @@ $('#custSearch').addEventListener('keydown', (e) => {
 $('#custBox').addEventListener('click', guard(async (e) => {
   const item = e.target.closest('.item');
   if (e.target.id === 'custClear') return setSaleCustomer(null);
+  if (e.target.id === 'custUse') return useCredit();
   if (e.target.id === 'custSena') return openPayDialog({ mode: 'sena', customer: saleCustomer, done: refreshSaleCustomer });
   if (!item) return;
   const q = $('#custSearch').value.trim();
@@ -248,8 +319,7 @@ async function refreshSaleCustomer() {
   if (c) { saleCustomer.balance = c.balance; renderCustomerChip(); }
 }
 function resetSale() {
-  cart = []; heldId = null; accountAsked = false; $('#discount').value = 0; saleCustomer = null; renderCustomerChip();
-  ['Efectivo', 'Tarjeta', 'Transferencia'].forEach((m) => ($('#pay' + m).value = ''));
+  cart = []; heldId = null; accountAsked = false; setAdjust(); saleCustomer = null; payLines = [{ method: 'efectivo', amount: '' }]; renderCustomerChip();
   renderCart(); $('#results').innerHTML = ''; $('#scan').value = ''; $('#scan').focus();
 }
 $('#clearCart').addEventListener('click', resetSale);
@@ -334,11 +404,9 @@ async function resolveCustomerAccount() {
     if (!choice) return false;
     if (choice === 'lay') { openLayawayDialog(); return false; }
     if (choice === 'pay' && !(await payDebtNow(c, owed))) return false;
-    if (choice === 'add') { ['Efectivo', 'Tarjeta', 'Transferencia'].forEach((m) => ($('#pay' + m).value = '')); $('#payCuenta').value = total; updateChange(); }
+    if (choice === 'add') setPayLines([{ method: 'cuenta', amount: '' }]);
   } else if (c.balance > 0 && !accountEntered()) {
-    if (await uiConfirm(`${c.name} tiene ${money(c.balance)} a favor. ¿Lo usás en esta compra?`, { title: 'Saldo a favor', ok: 'Usar el saldo', cancel: 'No usarlo' })) {
-      $('#payCuenta').value = Math.min(c.balance, total); updateChange();
-    }
+    if (await uiConfirm(`${c.name} tiene ${money(c.balance)} a favor. ¿Lo usás en esta compra?`, { title: 'Saldo a favor', ok: 'Usar el saldo', cancel: 'No usarlo' })) useCredit();
   }
   accountAsked = true;
   return true;
@@ -349,8 +417,7 @@ $('#charge').addEventListener('click', guard(async () => {
   if (!(await resolveCustomerAccount())) return;
   const payments = paymentsEntered();
   const { total } = cartTotals();
-  if (!payments.length && !accountEntered()) payments.push({ method: 'efectivo', amount: total }); // por defecto: efectivo exacto
-  const sale = await api('POST', '/sales', { items: cart.map((l) => ({ article_id: l.a.id, qty: l.qty })), discount_pct: Number($('#discount').value) || 0, payments, held_id: heldId || undefined, account_amount: accountEntered() || undefined, customer_id: saleCustomer?.id, customer_name: saleCustomer?.id ? undefined : saleCustomer?.name });
+  const sale = await api('POST', '/sales', { items: cart.map((l) => ({ article_id: l.a.id, qty: l.qty })), ...adjustBody(), payments, held_id: heldId || undefined, account_amount: accountEntered() || undefined, customer_id: saleCustomer?.id, customer_name: saleCustomer?.id ? undefined : saleCustomer?.name });
   toast(`Venta #${sale.id} registrada${sale.change ? ` · Vuelto ${money(sale.change)}` : ''}`);
   resetSale(); await loadCash();
   const full = (await api('GET', '/sales')).find((x) => x.id === sale.id);
@@ -829,6 +896,7 @@ function openLayawayDialog() {
   if (!cart.length) return toast('Cargá primero la mercadería que se aparta', true);
   if (!saleCustomer?.id) { toast('Elegí o creá el cliente que deja la seña', true); return $('#custSearch').focus(); }
   if (!cash) return toast('Abrí la caja para cobrar la seña', true);
+  if (hasAdjust()) toast('Los descuentos y recargos no se aplican a las señas: el apartado se arma a precio de lista.', true);
   const total = layTotal();
   layCtx = { customer: saleCustomer };
   $('#layInfo').textContent = `Cliente: ${saleCustomer.name}${saleCustomer.doc ? ` · ${saleCustomer.doc}` : ''}`;
@@ -917,7 +985,6 @@ const returnResolution = (r) => [
   r.credit_amount ? `${money(r.credit_amount)} a saldo a favor` : '',
 ].filter(Boolean).join('<br>') || '—';
 let ret = null; // { sale, back: {saleItemId: qty}, fresh: [{a, qty}], customer }
-const r2 = (n) => Math.round(n * 100) / 100;
 function retTotals() {
   const { sale } = ret;
   const ratio = sale.subtotal ? (sale.total - (sale.exchange_amount || 0)) / sale.subtotal : 1;
@@ -1092,7 +1159,7 @@ function ticketHtml(s, copy) {
     <hr>
     ${s.items.map((i) => `<div>${esc(i.name)}</div>` + row(`${i.qty} x ${money(i.price)}`, money(i.qty * i.price))).join('')}
     <hr>
-    ${s.discount ? row('Subtotal', money(s.subtotal)) + row('Descuento', '-' + money(s.discount)) : ''}
+    ${s.discount || s.surcharge ? row('Subtotal', money(s.subtotal)) + (s.discount ? row('Descuento', '-' + money(s.discount)) : '') + (s.surcharge ? row('Recargo', '+' + money(s.surcharge)) : '') : ''}
     ${row('TOTAL', money(s.total), 'tot')}
     <hr>${pays}
     <hr><div class="c">${esc(settings.footer)}</div>
@@ -1129,7 +1196,7 @@ function comprobanteHtml(s, copy) {
       ${s.items.map((i) => `<tr><td>${esc(i.name)}</td><td class="n">${i.qty}</td><td class="n">${money(i.price)}</td><td class="n">${money(i.qty * i.price)}</td></tr>`).join('')}
     </tbody></table>
     <div class="ct">
-      ${s.discount ? `<div>Subtotal: ${money(s.subtotal)}</div><div>Descuento: -${money(s.discount)}</div>` : ''}
+      ${s.discount || s.surcharge ? `<div>Subtotal: ${money(s.subtotal)}</div>${s.discount ? `<div>Descuento: -${money(s.discount)}</div>` : ''}${s.surcharge ? `<div>Recargo: +${money(s.surcharge)}</div>` : ''}` : ''}
       <div class="tot">TOTAL: ${money(s.total)}</div>
       <div class="cpay">Pago: ${esc(pay)}${s.change ? ` · Vuelto: ${money(s.change)}` : ''}</div>
     </div>
@@ -1594,7 +1661,7 @@ async function boot() {
   $('#artNew').hidden = $('#artImport').hidden = !can('articulos.editar');
   let first = null;
   $$('#tabs button').forEach((b) => { const ok = canAny(...TAB_PERMS[b.dataset.tab]); b.hidden = !ok; if (ok && !first) first = b.dataset.tab; });
-  renderCart();
+  renderPayLines(); renderCart();
   if (!first) return toast('Tu usuario no tiene permisos asignados. Pedile a un administrador que configure tu rol.', true);
   await guard(refreshCash)();
   const wanted = location.hash.slice(1);

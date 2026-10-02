@@ -479,13 +479,32 @@ export function createApp(db, opts = {}) {
     return layawayDetail(l.id);
   }));
 
+  // Descuento y recargo, cada uno por monto o por porcentaje (si hay monto, manda el monto).
+  // El descuento va sobre el subtotal; el recargo, sobre lo que queda después del descuento.
+  function computeTotals(subtotal, adj = {}) {
+    const n = (v, label) => { const x = Number(v ?? 0); if (!Number.isFinite(x) || x < 0) throw bad(`${label} inválido`); return x; };
+    const dPct = n(adj.discount_pct, 'Descuento'), dAmt = n(adj.discount_amount, 'Descuento');
+    const sPct = n(adj.surcharge_pct, 'Recargo'), sAmt = n(adj.surcharge_amount, 'Recargo');
+    if (dPct > 100) throw bad('Descuento inválido');
+    if (sPct > 100) throw bad('Recargo inválido');
+    const discount = dAmt > 0 ? round2(dAmt) : round2(subtotal * dPct / 100);
+    if (discount > subtotal) throw bad('El descuento no puede superar el subtotal');
+    const base = round2(subtotal - discount);
+    const surcharge = sAmt > 0 ? round2(sAmt) : round2(base * sPct / 100);
+    return { discount, surcharge, total: round2(base + surcharge) };
+  }
+  const cleanAdjust = (a = {}) => Object.fromEntries(['discount_pct', 'discount_amount', 'surcharge_pct', 'surcharge_amount'].map((k) => [k, Math.max(0, Number(a[k]) || 0)]));
+
   // Ventas en espera
   const MAX_HELD = 50;
   const heldRow = (h) => {
     let items = []; try { items = JSON.parse(h.items); } catch { /* vacío */ }
     const priced = items.map((i) => ({ qty: i.qty, a: db.prepare('SELECT price FROM articles WHERE id=? AND active=1').get(i.article_id) }));
+    let adjust = { discount_pct: h.discount_pct }; try { if (h.adjust) adjust = JSON.parse(h.adjust); } catch { /* sin ajustes */ }
+    let total = 0;
+    try { total = computeTotals(round2(priced.reduce((s, i) => s + (i.a ? i.a.price * i.qty : 0), 0)), adjust).total; } catch { /* ajuste que ya no entra: se ve el subtotal */ total = round2(priced.reduce((s, i) => s + (i.a ? i.a.price * i.qty : 0), 0)); }
     return { id: h.id, label: h.label, customer_id: h.customer_id, customer_name: h.customer_name, discount_pct: h.discount_pct, user_name: h.user_name ?? null, created_at: h.created_at,
-      units: items.reduce((s, i) => s + i.qty, 0), total: round2(priced.reduce((s, i) => s + (i.a ? i.a.price * i.qty : 0), 0) * (100 - h.discount_pct) / 100) };
+      units: items.reduce((s, i) => s + i.qty, 0), total };
   };
   route('GET', '/api/held', 'ventas.cobrar', () =>
     db.prepare('SELECT h.*, u.name AS user_name FROM held_sales h LEFT JOIN users u ON u.id=h.user_id ORDER BY h.id').all().map(heldRow));
@@ -497,16 +516,16 @@ export function createApp(db, opts = {}) {
       if (!db.prepare('SELECT 1 FROM articles WHERE id=? AND active=1').get(i.article_id)) throw new HttpError(404, `Artículo ${i.article_id} no encontrado`);
       return { article_id: Number(i.article_id), qty };
     });
-    const pct = num(body.discount_pct ?? 0, 'Descuento');
-    if (pct > 100) throw bad('Descuento inválido');
+    const adjust = cleanAdjust(body.adjust ?? { discount_pct: body.discount_pct });
+    if (adjust.discount_pct > 100 || adjust.surcharge_pct > 100) throw bad('Descuento o recargo inválido');
     let customer = null;
     if (body.customer_id) { customer = db.prepare('SELECT id,name FROM customers WHERE id=? AND active=1').get(body.customer_id); if (!customer) throw new HttpError(404, 'Cliente no encontrado'); }
     if (body.replace_id) db.prepare('DELETE FROM held_sales WHERE id=?').run(body.replace_id); // se volvió a poner en espera una ya retomada
     if (db.prepare('SELECT COUNT(*) AS n FROM held_sales').get().n >= MAX_HELD) throw new HttpError(409, `Hay demasiadas ventas en espera (máximo ${MAX_HELD}). Cobrá o descartá alguna.`);
     const label = String(body.label ?? '').trim().slice(0, 60);
     const customerName = customer ? customer.name : String(body.customer_name ?? '').trim().slice(0, 120);
-    const { lastInsertRowid: id } = db.prepare('INSERT INTO held_sales (user_id,label,customer_id,customer_name,discount_pct,items) VALUES (?,?,?,?,?,?)')
-      .run(user.id, label, customer?.id ?? null, customerName, pct, JSON.stringify(clean));
+    const { lastInsertRowid: id } = db.prepare('INSERT INTO held_sales (user_id,label,customer_id,customer_name,discount_pct,items,adjust) VALUES (?,?,?,?,?,?,?)')
+      .run(user.id, label, customer?.id ?? null, customerName, adjust.discount_pct, JSON.stringify(clean), JSON.stringify(adjust));
     return { status: 201, data: heldRow({ ...db.prepare('SELECT * FROM held_sales WHERE id=?').get(id) }) };
   }));
   // Retomar: devuelve el carrito con los precios y el stock de ahora (lo que ya no existe se avisa). No la borra: se borra al cobrarla o descartarla.
@@ -519,7 +538,8 @@ export function createApp(db, opts = {}) {
       if (a) items.push({ qty: i.qty, article: a }); else missing.push(i.article_id);
     }
     const customer = h.customer_id ? db.prepare(`${CUSTOMER_LIST} WHERE c.id=? AND c.active=1`).get(h.customer_id) : null;
-    return { id: h.id, label: h.label, discount_pct: h.discount_pct, customer_name: h.customer_name,
+    let adjust = { discount_pct: h.discount_pct }; try { if (h.adjust) adjust = JSON.parse(h.adjust); } catch { /* sin ajustes */ }
+    return { id: h.id, label: h.label, discount_pct: h.discount_pct, adjust, customer_name: h.customer_name,
       customer: customer ? { id: customer.id, name: customer.name, doc: customer.doc, balance: round2(customer.balance) } : null, items, missing: missing.length };
   });
   route('DELETE', '/api/held/:id', 'ventas.cobrar', ({ params }) => {
@@ -626,8 +646,6 @@ export function createApp(db, opts = {}) {
     }).filter((p) => p.amount > 0);
     const accountAmount = round2(num(body.account_amount ?? 0, 'Monto de cuenta corriente'));
     if (!payments.length && accountAmount <= 0 && !exchange && !prepaidTotal) throw bad('Indicá el medio de pago');
-    const discountPct = num(body.discount_pct ?? 0, 'Descuento');
-    if (discountPct > 100) throw bad('Descuento inválido');
 
     return tx(db, () => {
       const session = requireSession();
@@ -649,8 +667,7 @@ export function createApp(db, opts = {}) {
         subtotal += a.price * qty;
       }
       subtotal = round2(subtotal);
-      const discount = round2(subtotal * discountPct / 100);
-      const total = round2(subtotal - discount);
+      const { discount, surcharge, total } = computeTotals(subtotal, body);
 
       // Cuenta corriente: se descuenta del saldo a favor del cliente; dejarlo debiendo requiere un permiso aparte.
       let customer = null;
@@ -680,8 +697,8 @@ export function createApp(db, opts = {}) {
       const customerName = customer ? customer.name : String(body.customer_name ?? '').trim().slice(0, 120);
       const customerDoc = customer ? customer.doc : String(body.customer_doc ?? '').trim().slice(0, 30);
       const { lastInsertRowid: saleId } = db.prepare(
-        'INSERT INTO sales (session_id,subtotal,discount,total,user_id,customer_name,customer_doc,customer_id,account_amount,exchange_amount,prepaid_amount) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
-        .run(session.id, subtotal, discount, total, user.id, customerName, customerDoc, customer?.id ?? null, round2(accountAmount + prepaidAcc), exchange, prepaidTotal);
+        'INSERT INTO sales (session_id,subtotal,discount,surcharge,total,user_id,customer_name,customer_doc,customer_id,account_amount,exchange_amount,prepaid_amount) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
+        .run(session.id, subtotal, discount, surcharge, total, user.id, customerName, customerDoc, customer?.id ?? null, round2(accountAmount + prepaidAcc), exchange, prepaidTotal);
       if (accountAmount > 0) {
         db.prepare('INSERT INTO account_movements (customer_id,amount,concept,sale_id,user_id) VALUES (?,?,?,?,?)')
           .run(customer.id, -accountAmount, `Venta #${saleId}`, saleId, user.id);
@@ -701,7 +718,7 @@ export function createApp(db, opts = {}) {
         db.prepare('INSERT INTO cash_movements (session_id,type,method,amount,concept,sale_id,user_id) VALUES (?,?,?,?,?,?,?)')
           .run(session.id, 'ingreso', p.method, p.amount, `Venta #${saleId}`, saleId, user.id);
       }
-      return { status: 201, data: { id: saleId, subtotal, discount, total, change, account_amount: accountAmount, exchange_amount: exchange, prepaid_amount: prepaidTotal, payments: finalPayments } };
+      return { status: 201, data: { id: saleId, subtotal, discount, surcharge, total, change, account_amount: accountAmount, exchange_amount: exchange, prepaid_amount: prepaidTotal, payments: finalPayments } };
     });
   }
   route('POST', '/api/sales', 'ventas.cobrar', ({ body, user, can }) => createSale(body, user, can));
