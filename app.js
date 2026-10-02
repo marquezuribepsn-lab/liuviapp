@@ -946,6 +946,62 @@ export function createApp(db, opts = {}) {
   });
 
 
+  // Panel de inicio: un resumen de cómo viene el día. Cada bloque solo se manda si el usuario tiene el permiso correspondiente.
+  route('GET', '/api/dashboard', ['estadisticas.ver', 'caja.ver'], ({ can }) => {
+    const ymd = (d) => d.toLocaleDateString('sv-SE');
+    const days = Array.from({ length: 7 }, (_, i) => ymd(new Date(Date.now() - (6 - i) * 86_400_000)));
+    const sales = db.prepare(`
+      SELECT strftime('%Y-%m-%d', s.created_at) AS day, COUNT(*) AS n, COALESCE(SUM(s.total),0) AS total,
+             COALESCE(SUM(s.total - COALESCE((SELECT SUM(qty*cost) FROM sale_items WHERE sale_id = s.id),0)),0) AS profit
+      FROM sales s WHERE s.voided = 0 AND strftime('%Y-%m-%d', s.created_at) >= ? GROUP BY day`).all(days[0]);
+    const rets = returnRows("strftime('%Y-%m-%d', r.created_at) >= ?", days[0]);
+    const series = days.map((day) => {
+      const s = sales.find((x) => x.day === day) || { n: 0, total: 0, profit: 0 };
+      const r = rets.filter((x) => x.day === day);
+      return {
+        day, sales: s.n, total: round2(s.total - r.reduce((a, x) => a + x.value, 0)),
+        profit: round2(s.profit - r.reduce((a, x) => a + (x.value - x.cost), 0)),
+      };
+    });
+    const today = series.at(-1), yesterday = series.at(-2);
+    const out = {
+      today: { sales: today.sales, total: today.total, profit: can('costos.ver') ? today.profit : null, yesterday: yesterday.total },
+    };
+    if (can('estadisticas.ver')) {
+      out.week = series.map((d) => ({ day: d.day, total: d.total }));
+      out.weekTotal = round2(series.reduce((a, d) => a + d.total, 0));
+      out.top = db.prepare(`
+        SELECT i.name, SUM(i.qty) AS units FROM sale_items i JOIN sales s ON s.id = i.sale_id
+        WHERE s.voided = 0 AND strftime('%Y-%m-%d', s.created_at) >= ? GROUP BY i.article_id ORDER BY units DESC LIMIT 5`).all(days[0]).map((r) => ({ ...r }));
+    }
+    if (can('caja.ver')) {
+      const s = openSession();
+      out.cash = s ? { open: true, opened_at: s.opened_at, expected_cash: sessionSummary(s).expected_cash_now } : { open: false };
+    }
+    if (can('stock.ver')) {
+      const low = db.prepare(`
+        SELECT id, name, size, color, stock, min_stock FROM articles WHERE active = 1 AND stock <= min_stock
+        ORDER BY stock, name LIMIT 8`).all().map((r) => ({ ...r }));
+      const count = db.prepare('SELECT COUNT(*) AS n FROM articles WHERE active = 1 AND stock <= min_stock').get().n;
+      out.lowStock = { count, items: low };
+    }
+    if (can('clientes.ver')) {
+      const debtors = db.prepare(`${CUSTOMER_LIST} WHERE c.active = 1`).all().map((c) => ({ id: c.id, name: c.name, balance: round2(c.balance) })).filter((c) => c.balance < 0);
+      debtors.sort((a, b) => a.balance - b.balance);
+      out.debts = { count: debtors.length, total: round2(-debtors.reduce((a, c) => a + c.balance, 0)), top: debtors.slice(0, 5) };
+      const open = db.prepare("SELECT id FROM layaways WHERE status = 'open'").all().map((r) => layawayDetail(r.id));
+      out.layaways = {
+        count: open.length,
+        pending: round2(open.reduce((a, l) => a + Math.max(0, l.remaining), 0)),
+      };
+    }
+    if (can('sistema.copias')) {
+      const b = backups.status();
+      out.backup = { configured: !!b.dir, auto: b.auto, last_at: b.last_at, error: b.error, next_at: b.next_at };
+    }
+    return out;
+  });
+
   // ---------- Autenticación ----------
   const limiter = createLimiter();
   const publicUser = (u) => ({ id: u.id, username: u.username, name: u.name, role: u.role_name, hasPin: !!u.hasPin, permissions: u.permissions });
