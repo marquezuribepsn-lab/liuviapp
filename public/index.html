@@ -125,26 +125,20 @@
   </div>
   </div>
   <div id="cajaOpen" hidden>
-    <div class="split">
-      <div class="card" id="cajaOps">
-        <h2>Ingreso / egreso manual</h2>
-        <form id="movForm">
-          <label>Tipo <select id="movType"><option value="egreso">Egreso (gasto, retiro)</option><option value="ingreso">Ingreso</option></select></label>
-          <label>Medio <select id="movMethod"><option>efectivo</option><option>tarjeta</option><option>transferencia</option></select></label>
-          <label>Monto <input id="movAmount" type="number" min="0.01" step="0.01" required></label>
-          <label>Concepto <input id="movConcept" required placeholder="Ej: Bolsas, proveedor, retiro"></label>
-          <button class="primary">Registrar</button>
-        </form>
-        <hr>
-        <h2>Cerrar caja</h2>
-        <form id="closeForm">
-          <div id="expected" class="muted"></div>
-          <label>Efectivo contado <input id="closeCounted" type="number" min="0" step="0.01" required></label>
-          <label>Observaciones <input id="closeNote"></label>
-          <button class="danger">Cerrar caja</button>
-        </form>
+    <div class="cajaDock">
+      <div class="dockGroup">
+        <button type="button" id="dockMov" class="dockBtn" title="Registrar un ingreso o un egreso de dinero">
+          <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4v14m0 0-3-3m3 3 3-3"/><path d="M17 20V6m0 0-3 3m3-3 3 3"/></svg>
+          <span>Ingreso / egreso</span></button>
+        <button type="button" id="dockClose" class="dockBtn dockDanger" title="Contar el efectivo y cerrar la caja">
+          <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+          <span>Cerrar caja</span></button>
       </div>
-      <div class="card" id="cajaMovs"><h2>Movimientos de la caja</h2><table id="cashMovTable"><thead><tr><th>Hora</th><th>Tipo</th><th>Medio</th><th>Monto</th><th>Concepto</th><th>Usuario</th></tr></thead><tbody></tbody></table></div>
+      <div class="dockGroup">
+        <button type="button" id="dockList" class="dockBtn" title="Ver los ingresos y egresos de la caja de hoy">
+          <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
+          <span>Movimientos de la caja</span></button>
+      </div>
     </div>
   </div>
   <h2>Ventas del día <input id="salesDate" type="date" style="width:auto;margin-left:10px;font-size:14px"></h2>
@@ -600,6 +594,30 @@
     <p class="muted" id="layPayHint"></p>
     <div id="layPayError" class="neg"></div>
     <div class="row end"><button type="button" id="layPayCancel" class="ghost">Cancelar</button><button class="primary" id="layPayOk">Cobrar</button></div>
+  </form>
+</dialog>
+<dialog id="movDialog">
+  <form id="movForm" method="dialog">
+    <h2>Ingreso / egreso de dinero</h2>
+    <label>Tipo <select id="movType"><option value="egreso">Egreso (gasto, retiro)</option><option value="ingreso">Ingreso</option></select></label>
+    <label>Medio <select id="movMethod"><option>efectivo</option><option>tarjeta</option><option>transferencia</option></select></label>
+    <label>Monto <input id="movAmount" type="number" min="0.01" step="0.01" required></label>
+    <label>Concepto <input id="movConcept" required placeholder="Ej: Bolsas, proveedor, retiro"></label>
+    <div id="movError" class="neg"></div>
+    <div class="row end"><button type="button" id="movCancel" class="ghost">Cancelar</button><button class="primary">Registrar</button></div>
+  </form>
+</dialog>
+<dialog id="movListDialog" class="wide">
+  <div class="row"><h2 style="margin:0">Movimientos de la caja</h2><span class="grow"></span><button type="button" id="movListClose" class="ghost">Cerrar</button></div>
+  <div class="scrollBox" style="max-height:60vh"><table id="cashMovTable"><thead><tr><th>Hora</th><th>Tipo</th><th>Medio</th><th>Monto</th><th>Concepto</th><th>Usuario</th></tr></thead><tbody></tbody></table></div>
+</dialog>
+<dialog id="closeDialog">
+  <form id="closeForm" method="dialog">
+    <h2>Cerrar caja</h2>
+    <div id="expected" class="muted"></div>
+    <label>Efectivo contado <input id="closeCounted" type="number" min="0" step="0.01" required></label>
+    <label>Observaciones <input id="closeNote"></label>
+    <div class="row end"><button type="button" id="closeCancel" class="ghost">Cancelar</button><button class="danger">Cerrar caja</button></div>
   </form>
 </dialog>
 <dialog id="payDialog">

@@ -212,3 +212,13 @@ body.locked>footer{display:none}
 .moreMenu button{background:transparent;border:0;text-align:left;padding:10px 12px;border-radius:8px;color:var(--ink);font-size:15px}
 .moreMenu button:hover{background:var(--soft)}
 #cart td:nth-child(2){white-space:nowrap}
+
+/* Botones de caja (ingreso/egreso, cierre, movimientos) a izquierda y derecha de la pantalla de ventas */
+.cajaDock{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:14px 0}
+.dockGroup{display:flex;gap:12px;flex-wrap:wrap}
+.dockBtn{display:flex;align-items:center;gap:12px;padding:14px 20px;border-radius:14px;background:var(--card);color:var(--ink);border:1px solid var(--line);font-size:15px;font-weight:600}
+.dockBtn svg{color:var(--accent);flex:none}
+.dockBtn:hover{border-color:var(--accent);background:var(--soft)}
+.dockDanger svg{color:var(--bad)}
+.dockBtn[hidden]{display:none}
+.payAct{display:flex;gap:6px;align-items:center}
