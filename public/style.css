@@ -115,7 +115,7 @@ th{color:var(--muted)}tr:hover td{background:var(--soft)}
 .lbl .n .b{text-transform:uppercase;font-size:7pt;letter-spacing:.4px;font-weight:700}
 
 #venta>h2,#sessionsBox>h2{margin-top:24px}
-#login .verInfo{margin:0;font-size:12px;color:var(--brand-ink);opacity:.9}
+#login .verInfo{font-size:12px;color:var(--brand-ink);opacity:.9}
 
 /* Perfil y seguridad, bloqueo */
 .profileBtn{background:none;border:0;color:var(--head-ink);font:inherit;cursor:pointer;padding:4px 8px;border-radius:8px;text-align:left}
@@ -263,3 +263,9 @@ body.locked>footer{display:none}
 
 #repTable tr.tot td{border-top:2px solid var(--ink)}
 #repTable th,#repTable td{white-space:nowrap}
+
+/* Navegación en dos niveles: grupos arriba, secciones del grupo abajo */
+#subTabs{flex:1 1 100%;order:10;border-top:1px solid #ffffff55;padding-top:6px;margin-top:2px}
+#subTabs[hidden]{display:none}
+#subTabs button{padding:5px 14px;font-size:14px;border-radius:99px}
+#subTabs button.active{background:#ffffff;color:var(--brand-ink)}

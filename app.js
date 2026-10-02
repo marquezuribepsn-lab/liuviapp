@@ -10,6 +10,7 @@ import { buildXlsx } from './xlsx.js';
 import { createImporter, ImportError, SheetFormatError } from './importer.js';
 import { appVersion, getSetting, setSetting, APP_DIR } from './db.js';
 import { createUpdater } from './updater.js';
+import './public/promo.js'; // define globalThis.Promo (el mismo cálculo que usa la pantalla de venta)
 import {
   PERMISSIONS, ALL_PERMISSIONS, MIN_PASSWORD, SESSION_HOURS,
   hashPassword, verifyPassword, newToken, hashToken, parseCookies, createLimiter, PIN_RE, isWeakPin, isLoopback,
@@ -509,10 +510,13 @@ export function createApp(db, opts = {}) {
   const MAX_HELD = 50;
   const heldRow = (h) => {
     let items = []; try { items = JSON.parse(h.items); } catch { /* vacío */ }
-    const priced = items.map((i) => ({ qty: i.qty, a: db.prepare('SELECT price FROM articles WHERE id=? AND active=1').get(i.article_id) }));
+    const priced = items.map((i) => ({ qty: i.qty, article_id: i.article_id, a: db.prepare('SELECT price FROM articles WHERE id=? AND active=1').get(i.article_id) }));
     let adjust = { discount_pct: h.discount_pct }; try { if (h.adjust) adjust = JSON.parse(h.adjust); } catch { /* sin ajustes */ }
     let total = 0;
-    try { total = computeTotals(round2(priced.reduce((s, i) => s + (i.a ? i.a.price * i.qty : 0), 0)), adjust).total; } catch { /* ajuste que ya no entra: se ve el subtotal */ total = round2(priced.reduce((s, i) => s + (i.a ? i.a.price * i.qty : 0), 0)); }
+    try {
+      const sub = round2(priced.reduce((s, i) => s + (i.a ? i.a.price * i.qty : 0), 0));
+      total = computeTotals(round2(sub - promoFor(priced.filter((i) => i.a).map((i) => ({ article_id: i.article_id, price: i.a.price, qty: i.qty }))).total), adjust).total;
+    } catch { /* ajuste que ya no entra: se ve el subtotal */ total = round2(priced.reduce((s, i) => s + (i.a ? i.a.price * i.qty : 0), 0)); }
     return { id: h.id, label: h.label, customer_id: h.customer_id, customer_name: h.customer_name, discount_pct: h.discount_pct, user_name: h.user_name ?? null, created_at: h.created_at,
       units: items.reduce((s, i) => s + i.qty, 0), total };
   };
@@ -641,6 +645,86 @@ export function createApp(db, opts = {}) {
     return { status: 201, data: { balance: customerBalance(c.id) } };
   }));
 
+  // Ofertas
+  const KINDS = ['percent', 'price', 'nxm', 'second'];
+  const todayStr = () => new Date().toLocaleDateString('sv-SE');
+  function offerRow(p) {
+    return { ...p, active: !!p.active, article_ids: db.prepare('SELECT article_id FROM promotion_articles WHERE promotion_id=? ORDER BY article_id').all(p.id).map((r) => r.article_id) };
+  }
+  const allOffers = () => db.prepare('SELECT * FROM promotions ORDER BY id DESC').all().map(offerRow);
+  const activeOffers = () => db.prepare('SELECT * FROM promotions WHERE active=1').all().map(offerRow).filter((o) => globalThis.Promo.inForce(o, todayStr()));
+  // Descuento por ofertas de un conjunto de líneas {article_id, price, qty}.
+  const promoFor = (lines) => (lines.length ? globalThis.Promo.apply(activeOffers(), lines) : { total: 0, detail: [] });
+  function offerFields(b) {
+    const name = String(b.name ?? '').trim().slice(0, 80);
+    if (!name) throw bad('Poné un nombre para la oferta');
+    const kind = KINDS.includes(b.kind) ? b.kind : null;
+    if (!kind) throw bad('Elegí el tipo de oferta');
+    const f = { name, kind, pct: 0, price: 0, buy: 0, pay: 0 };
+    if (kind === 'percent' || kind === 'second') {
+      f.pct = Number(b.pct);
+      if (!(f.pct > 0 && f.pct <= 100)) throw bad('El porcentaje tiene que ser mayor a 0 y hasta 100');
+    }
+    if (kind === 'price') { if (b.price === '' || b.price == null) throw bad('Poné el precio de la oferta'); f.price = round2(Number(b.price)); if (!(f.price >= 0) || !Number.isFinite(f.price)) throw bad('Precio inválido'); }
+    if (kind === 'nxm') {
+      f.buy = Math.round(Number(b.buy)); f.pay = Math.round(Number(b.pay));
+      if (!(f.buy >= 2 && f.buy <= 12) || !(f.pay >= 1 && f.pay < f.buy)) throw bad('Llevá N, pagá M: N entre 2 y 12, y M menor que N (por ejemplo 2x1 o 3x2)');
+    }
+    const day = (v) => { const x = String(v ?? '').trim(); if (!x) return null; if (!/^\d{4}-\d{2}-\d{2}$/.test(x)) throw bad('Fecha inválida'); return x; };
+    f.starts_on = day(b.starts_on); f.ends_on = day(b.ends_on);
+    if (f.starts_on && f.ends_on && f.starts_on > f.ends_on) throw bad('La fecha de inicio es posterior a la de fin');
+    const ids = [...new Set((Array.isArray(b.article_ids) ? b.article_ids : []).map((x) => Number(x)).filter((x) => Number.isInteger(x) && x > 0))];
+    if (!ids.length) throw bad('Elegí al menos un artículo para la oferta');
+    if (ids.length > 2000) throw bad('Demasiados artículos en una oferta (máximo 2000)');
+    for (const id of ids) if (!db.prepare('SELECT 1 FROM articles WHERE id=? AND active=1').get(id)) throw new HttpError(404, `Artículo ${id} no encontrado`);
+    return { ...f, article_ids: ids, active: b.active === undefined ? 1 : (b.active ? 1 : 0) };
+  }
+  // Un artículo no puede estar en dos ofertas activas a la vez (no sabríamos cuál aplicar).
+  function checkOverlap(f, exceptId = 0) {
+    if (!f.active) return;
+    for (const id of f.article_ids) {
+      const other = db.prepare(`SELECT p.name, a.name AS article, a.size FROM promotion_articles pa JOIN promotions p ON p.id = pa.promotion_id JOIN articles a ON a.id = pa.article_id
+        WHERE pa.article_id=? AND p.active=1 AND p.id<>?`).get(id, exceptId);
+      if (other) throw new HttpError(409, `«${other.article}${other.size ? ' ' + other.size : ''}» ya está en la oferta «${other.name}». Sacalo de una de las dos o desactivá la otra.`);
+    }
+  }
+  const saveOffer = (f, id) => {
+    const cols = [f.name, f.kind, f.pct, f.price, f.buy, f.pay, f.starts_on, f.ends_on, f.active];
+    if (id) db.prepare('UPDATE promotions SET name=?,kind=?,pct=?,price=?,buy=?,pay=?,starts_on=?,ends_on=?,active=? WHERE id=?').run(...cols, id);
+    else id = db.prepare('INSERT INTO promotions (name,kind,pct,price,buy,pay,starts_on,ends_on,active) VALUES (?,?,?,?,?,?,?,?,?)').run(...cols).lastInsertRowid;
+    db.prepare('DELETE FROM promotion_articles WHERE promotion_id=?').run(id);
+    for (const a of f.article_ids) db.prepare('INSERT INTO promotion_articles (promotion_id,article_id) VALUES (?,?)').run(id, a);
+    return id;
+  };
+  // Para la pantalla de venta: solo las ofertas vigentes hoy.
+  route('GET', '/api/promotions/active', ['ventas.cobrar', 'stock.ver', 'articulos.ver'], () => activeOffers());
+  route('GET', '/api/promotions', ['stock.ver', 'articulos.ver'], () => {
+    const names = db.prepare('SELECT id, name, size, color FROM articles').all();
+    const label = new Map(names.map((a) => [a.id, [a.name, a.size, a.color].filter(Boolean).join(' · ')]));
+    return allOffers().map((o) => ({ ...o, article_labels: o.article_ids.slice(0, 200).map((id) => ({ id, label: label.get(id) || `#${id}` })) }));
+  });
+  route('POST', '/api/promotions', 'articulos.editar', ({ body }) => tx(db, () => {
+    const f = offerFields(body);
+    checkOverlap(f);
+    return { status: 201, data: offerRow(db.prepare('SELECT * FROM promotions WHERE id=?').get(saveOffer(f))) };
+  }));
+  route('PUT', '/api/promotions/:id', 'articulos.editar', ({ params, body }) => tx(db, () => {
+    const cur = db.prepare('SELECT * FROM promotions WHERE id=?').get(params.id);
+    if (!cur) throw new HttpError(404, 'Oferta no encontrada');
+    const merged = { ...offerRow(cur), ...body };
+    const f = offerFields(merged);
+    checkOverlap(f, cur.id);
+    saveOffer(f, cur.id);
+    return offerRow(db.prepare('SELECT * FROM promotions WHERE id=?').get(cur.id));
+  }));
+  route('DELETE', '/api/promotions/:id', 'articulos.editar', ({ params }) => tx(db, () => {
+    const cur = db.prepare('SELECT id FROM promotions WHERE id=?').get(params.id);
+    if (!cur) throw new HttpError(404, 'Oferta no encontrada');
+    db.prepare('DELETE FROM promotion_articles WHERE promotion_id=?').run(cur.id);
+    db.prepare('DELETE FROM promotions WHERE id=?').run(cur.id);
+    return { ok: true };
+  }));
+
   // Ventas
   // `exchange`: parte del total cubierta por mercadería devuelta (cambios).
   // `extra.prepaid`: señas ya cobradas [{method, amount}] (apartado que se completa); `extra.locked`: precios fijados {article_id: price}; `extra.layawayId`: su reserva no cuenta como stock ocupado.
@@ -677,7 +761,10 @@ export function createApp(db, opts = {}) {
         subtotal += a.price * qty;
       }
       subtotal = round2(subtotal);
-      const { discount, surcharge, total } = computeTotals(subtotal, body);
+      // Ofertas vigentes (no se aplican a apartados: ahí los precios ya quedaron fijados). Después, el descuento manual va sobre lo que queda.
+      const promo = extra.locked || extra.layawayId ? { total: 0, detail: [] } : promoFor(lines.map((l) => ({ article_id: l.a.id, price: l.a.price, qty: l.qty })));
+      const manual = computeTotals(round2(subtotal - promo.total), body);
+      const discount = round2(manual.discount + promo.total), surcharge = manual.surcharge, total = manual.total;
 
       // Cuenta corriente: se descuenta del saldo a favor del cliente; dejarlo debiendo requiere un permiso aparte.
       let customer = null;
@@ -707,8 +794,8 @@ export function createApp(db, opts = {}) {
       const customerName = customer ? customer.name : String(body.customer_name ?? '').trim().slice(0, 120);
       const customerDoc = customer ? customer.doc : String(body.customer_doc ?? '').trim().slice(0, 30);
       const { lastInsertRowid: saleId } = db.prepare(
-        'INSERT INTO sales (session_id,subtotal,discount,surcharge,total,user_id,customer_name,customer_doc,customer_id,account_amount,exchange_amount,prepaid_amount) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
-        .run(session.id, subtotal, discount, surcharge, total, user.id, customerName, customerDoc, customer?.id ?? null, round2(accountAmount + prepaidAcc), exchange, prepaidTotal);
+        'INSERT INTO sales (session_id,subtotal,discount,surcharge,total,user_id,customer_name,customer_doc,customer_id,account_amount,exchange_amount,prepaid_amount,promo_discount,promo_detail) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+        .run(session.id, subtotal, discount, surcharge, total, user.id, customerName, customerDoc, customer?.id ?? null, round2(accountAmount + prepaidAcc), exchange, prepaidTotal, promo.total, promo.detail.length ? JSON.stringify(promo.detail) : null);
       if (accountAmount > 0) {
         db.prepare('INSERT INTO account_movements (customer_id,amount,concept,sale_id,user_id) VALUES (?,?,?,?,?)')
           .run(customer.id, -accountAmount, `Venta #${saleId}`, saleId, user.id);
@@ -728,7 +815,7 @@ export function createApp(db, opts = {}) {
         db.prepare('INSERT INTO cash_movements (session_id,type,method,amount,concept,sale_id,user_id) VALUES (?,?,?,?,?,?,?)')
           .run(session.id, 'ingreso', p.method, p.amount, `Venta #${saleId}`, saleId, user.id);
       }
-      return { status: 201, data: { id: saleId, subtotal, discount, surcharge, total, change, account_amount: accountAmount, exchange_amount: exchange, prepaid_amount: prepaidTotal, payments: finalPayments } };
+      return { status: 201, data: { id: saleId, subtotal, discount, promo_discount: promo.total, promo_detail: promo.detail, surcharge, total, change, account_amount: accountAmount, exchange_amount: exchange, prepaid_amount: prepaidTotal, payments: finalPayments } };
     });
   }
   route('POST', '/api/sales', 'ventas.cobrar', ({ body, user, can }) => createSale(body, user, can));
@@ -825,12 +912,15 @@ export function createApp(db, opts = {}) {
     const wanted = Array.isArray(body.new_items) ? body.new_items : [];
     let exchange = 0, newSale = null;
     if (wanted.length) {
+      const priced = [];
       const n = wanted.reduce((sum, it) => {
         const a = db.prepare('SELECT price FROM articles WHERE id=? AND active=1').get(it.article_id);
         if (!a) throw new HttpError(404, `Artículo ${it.article_id} no encontrado`);
-        return sum + a.price * num(it.qty, 'Cantidad', { min: 1, int: true });
+        const qty = num(it.qty, 'Cantidad', { min: 1, int: true });
+        priced.push({ article_id: it.article_id, price: a.price, qty });
+        return sum + a.price * qty;
       }, 0);
-      exchange = Math.min(value, round2(n));
+      exchange = Math.min(value, round2(n - promoFor(priced).total)); // las ofertas vigentes también rigen en la prenda nueva
       newSale = createSale({ items: wanted, payments: body.payments, account_amount: body.account_amount, customer_id: customer?.id }, user, can, exchange).data;
     }
 
@@ -1628,14 +1718,16 @@ export function createApp(db, opts = {}) {
     catch { throw bad('JSON inválido'); }
   }
 
-  async function handle(req, res) {
-    const url = new URL(req.url, 'http://localhost');
+  async function handleRequest(req, res) {
     const send = (status, data) => {
+      if (res.headersSent) { try { res.end(); } catch { /* conexión cerrada */ } return; } // ya se había empezado a responder: no se puede escribir de nuevo
       const body = JSON.stringify(data);
       res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(body);
     };
     try {
+      let url;
+      try { url = new URL(req.url, 'http://localhost'); } catch { throw bad('Dirección inválida'); }
       if (url.pathname.startsWith('/api/')) {
         for (const r of routes) {
           if (r.method !== req.method) continue;
@@ -1688,6 +1780,13 @@ export function createApp(db, opts = {}) {
       console.error(e);
       send(500, { error: 'Error interno' });
     }
+  }
+  // Ningún error de un pedido puede tirar abajo el sistema: se registra y se cierra ese pedido.
+  function handle(req, res) {
+    handleRequest(req, res).catch((e) => {
+      console.error('Error no controlado en un pedido:', e);
+      try { if (!res.headersSent) { res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' }); res.end('{"error":"Error interno"}'); } else res.end(); } catch { /* conexión cerrada */ }
+    });
   }
   handle.backups = backups;
   handle.updater = updater;

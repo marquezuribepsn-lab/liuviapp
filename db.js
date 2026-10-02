@@ -80,6 +80,8 @@ export function openDb(path = defaultDbPath()) {
   db.exec(`
     PRAGMA journal_mode = WAL;
     PRAGMA foreign_keys = ON;
+    PRAGMA busy_timeout = 5000;     -- si otra copia del programa está escribiendo, espera en vez de fallar
+    PRAGMA synchronous = NORMAL;    -- con WAL es seguro y más rápido
 
     -- Cada fila es un SKU: artículo + talle + color, con su propio código de barras y stock.
     CREATE TABLE IF NOT EXISTS articles (
@@ -224,6 +226,27 @@ export function openDb(path = defaultDbPath()) {
 
     -- Apartados (señas): la mercadería queda reservada a nombre del cliente hasta que complete el pago.
     -- Recién al completarse se genera la venta (y sale del stock). Las señas no pasan por la cuenta corriente.
+    -- Ofertas: descuento %, precio fijo, llevá N pagá M (2x1, 3x2) o descuento en la segunda unidad. Un artículo está en una sola oferta activa.
+    CREATE TABLE IF NOT EXISTS promotions (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      name       TEXT NOT NULL,
+      kind       TEXT NOT NULL CHECK (kind IN ('percent','price','nxm','second')),
+      pct        REAL NOT NULL DEFAULT 0,
+      price      REAL NOT NULL DEFAULT 0,
+      buy        INTEGER NOT NULL DEFAULT 0,
+      pay        INTEGER NOT NULL DEFAULT 0,
+      starts_on  TEXT,
+      ends_on    TEXT,
+      active     INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    CREATE TABLE IF NOT EXISTS promotion_articles (
+      promotion_id INTEGER NOT NULL REFERENCES promotions(id) ON DELETE CASCADE,
+      article_id   INTEGER NOT NULL REFERENCES articles(id),
+      PRIMARY KEY (promotion_id, article_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_promo_articles_article ON promotion_articles(article_id);
+
     -- Proveedores y compras. El saldo de un proveedor es la suma de sus movimientos (positivo = se le debe, negativo = pagos).
     CREATE TABLE IF NOT EXISTS suppliers (
       id         INTEGER PRIMARY KEY,
@@ -378,10 +401,33 @@ export function openDb(path = defaultDbPath()) {
   ensureColumn('user_sessions', 'locked', 'INTEGER DEFAULT 0');    // sesión bloqueada (pantalla de bloqueo)
   ensureColumn('user_sessions', 'last_seen', 'TEXT');              // última actividad, para el bloqueo por inactividad
   ensureColumn('articles', 'brand_id');
+  ensureColumn('sales', 'promo_discount', 'REAL NOT NULL DEFAULT 0'); // parte del descuento que viene de ofertas
+  ensureColumn('sales', 'promo_detail', 'TEXT');
   ensureColumn('purchases', 'voided', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn('purchases', 'voided_at', 'TEXT');
   ensureColumn('purchases', 'edited_at', 'TEXT');
   ensureColumn('sale_items', 'brand', 'TEXT'); // marca al momento de vender, para las estadísticas por marca
+
+  // Índices para que las listas y los reportes sigan rápidos con años de ventas.
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_sale_items_sale ON sale_items(sale_id);
+    CREATE INDEX IF NOT EXISTS idx_sale_items_article ON sale_items(article_id);
+    CREATE INDEX IF NOT EXISTS idx_sale_payments_sale ON sale_payments(sale_id);
+    CREATE INDEX IF NOT EXISTS idx_sales_session ON sales(session_id);
+    CREATE INDEX IF NOT EXISTS idx_sales_customer ON sales(customer_id);
+    CREATE INDEX IF NOT EXISTS idx_sales_user ON sales(user_id);
+    CREATE INDEX IF NOT EXISTS idx_return_items_return ON return_items(return_id);
+    CREATE INDEX IF NOT EXISTS idx_return_items_sale_item ON return_items(sale_item_id);
+    CREATE INDEX IF NOT EXISTS idx_layaway_items_layaway ON layaway_items(layaway_id);
+    CREATE INDEX IF NOT EXISTS idx_layaway_payments_layaway ON layaway_payments(layaway_id);
+    CREATE INDEX IF NOT EXISTS idx_purchases_supplier ON purchases(supplier_id);
+    CREATE INDEX IF NOT EXISTS idx_purchases_bought ON purchases(bought_at);
+    CREATE INDEX IF NOT EXISTS idx_purchase_items_purchase ON purchase_items(purchase_id);
+    CREATE INDEX IF NOT EXISTS idx_supplier_mov_purchase ON supplier_movements(purchase_id);
+    CREATE INDEX IF NOT EXISTS idx_price_changes_article ON price_changes(article_id);
+    CREATE INDEX IF NOT EXISTS idx_articles_brand ON articles(brand_id);
+    CREATE INDEX IF NOT EXISTS idx_user_sessions_expires ON user_sessions(expires_at);
+  `);
 
   // Marcas que maneja el local (se pueden agregar, renombrar y borrar desde Artículos).
   if (!db.prepare('SELECT 1 FROM brands LIMIT 1').get()) {
