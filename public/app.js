@@ -625,6 +625,53 @@ const fileToBase64 = (file) => new Promise((resolve, reject) => {
   r.onerror = () => reject(new Error('No se pudo leer el archivo'));
   r.readAsDataURL(file);
 });
+// Cambio masivo de precios
+const prBody = () => ({ brand_id: $('#prBrand').value || null, category: $('#prCategory').value, query: $('#prQuery').value, only_stock: $('#prStock').checked,
+  target: $('#prTarget').value, mode: $('#prMode').value, value: $('#prValue').value === '' ? 0 : Number($('#prValue').value), round: Number($('#prRound').value) });
+async function loadPriceHistory() {
+  const h = await api('GET', '/prices/history');
+  $('#prHistory tbody').innerHTML = h.map((b) => `<tr><td>${esc(b.created_at.slice(0, 16))}</td><td>${esc(b.description)}</td><td class="num">${b.count} art.</td><td>${b.undone ? '<span class="muted">deshecho</span>' : ''}</td></tr>`).join('') || '<tr><td class="muted">Todavía no hubo cambios</td></tr>';
+  $('#prUndo').disabled = !h.some((b) => !b.undone);
+}
+function prReset() { $('#prPreviewBox').hidden = true; $('#prApply').disabled = true; $('#prSummary').textContent = ''; setMsg('prError', ''); }
+$('#artPrices').addEventListener('click', guard(async () => {
+  const brands = await api('GET', '/brands');
+  $('#prBrand').innerHTML = '<option value="">Todas las marcas</option>' + brands.map((b) => `<option value="${b.id}">${esc(b.name)}</option>`).join('');
+  $$('#prTarget option.col-cost').forEach((o) => { o.hidden = o.disabled = !can('costos.ver'); });
+  $('#prTarget').value = 'price'; $('#prValue').value = ''; prReset();
+  await loadPriceHistory();
+  $('#priceDialog').showModal();
+}));
+['prBrand', 'prCategory', 'prQuery', 'prStock', 'prTarget', 'prMode', 'prValue', 'prRound'].forEach((id) => $('#' + id).addEventListener('input', prReset));
+$('#prClose').addEventListener('click', () => $('#priceDialog').close());
+$('#prPreview').addEventListener('click', guard(async () => {
+  prReset();
+  try {
+    const r = await api('POST', '/prices/preview', prBody());
+    $('#prSummary').textContent = `${r.changed} de ${r.total} artículos cambian${r.changed > r.items.length ? ` (se muestran los primeros ${r.items.length})` : ''}.`;
+    $('#prTable tbody').innerHTML = r.items.map((i) => `<tr><td>${esc(i.name)}</td><td class="num">${money(i.old_price)}</td><td class="num"><b>${money(i.new_price)}</b></td><td class="num col-cost">${i.old_cost === undefined ? '' : money(i.old_cost)}</td><td class="num col-cost">${i.new_cost === undefined ? '' : money(i.new_cost)}</td></tr>`).join('') || '<tr><td class="muted" colspan="5">Ningún artículo cambia con estos valores</td></tr>';
+    $('#prPreviewBox').hidden = false; $('#prApply').disabled = !r.changed;
+    $('#prApply').dataset.changed = r.changed; $('#prApply').dataset.desc = r.description;
+  } catch (e) { setMsg('prError', e.message); }
+}));
+$('#prApply').addEventListener('click', guard(async () => {
+  const n = $('#prApply').dataset.changed;
+  if (!(await uiConfirm(`Se van a cambiar ${n} artículos: ${$('#prApply').dataset.desc}.\n\nDespués podés deshacerlo desde el historial.`, { title: 'Cambiar precios', ok: 'Aplicar' }))) return;
+  try {
+    const r = await api('POST', '/prices/apply', prBody());
+    toast(`Listo: se actualizaron ${r.changed} artículos`);
+    prReset(); await loadPriceHistory(); await loadArticles();
+  } catch (e) { setMsg('prError', e.message); }
+}));
+$('#prUndo').addEventListener('click', guard(async () => {
+  if (!(await uiConfirm('Se vuelven a poner los precios (y costos) anteriores del último cambio. Si después editaste a mano alguno de esos artículos, también vuelve al valor de antes.', { title: 'Deshacer el último cambio', ok: 'Deshacer', danger: true }))) return;
+  try {
+    const r = await api('POST', '/prices/undo', {});
+    toast(`Se deshizo el cambio (${r.restored} artículos)`);
+    prReset(); await loadPriceHistory(); await loadArticles();
+  } catch (e) { setMsg('prError', e.message); }
+}));
+
 $('#artImport').addEventListener('click', () => {
   impPreview = null; $('#impFile').value = ''; $('#impAnalyze').disabled = true; setMsg('impError', '');
   impShow(1); $('#importDialog').showModal();
@@ -1891,7 +1938,7 @@ async function boot() {
   document.body.classList.toggle('nocost', !can('costos.ver'));
   $('#adjCard').hidden = !can('stock.ajustar');
   $('#clearCard').hidden = !can('stock.limpiar');
-  $('#artNew').hidden = $('#artImport').hidden = !can('articulos.editar');
+  $('#artNew').hidden = $('#artImport').hidden = $('#artPrices').hidden = !can('articulos.editar');
   let first = null;
   $$('#tabs button').forEach((b) => { const ok = canAny(...TAB_PERMS[b.dataset.tab]); b.hidden = !ok; if (ok && !first) first = b.dataset.tab; });
   renderPayLines(); renderCart();

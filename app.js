@@ -948,6 +948,63 @@ export function createApp(db, opts = {}) {
   });
 
 
+  // Cambio masivo de precios (por marca, categoría, etc.) con vista previa y posibilidad de deshacer la última tanda.
+  const ROUNDINGS = [0, 1, 10, 50, 100, 500, 1000];
+  const SIGN = { percent: '%', amount: '$' };
+  function priceSelection(b, can) {
+    const target = ['price', 'cost', 'both'].includes(b.target) ? b.target : 'price';
+    if (target !== 'price' && !can('costos.ver')) throw new HttpError(403, 'No tenés permiso para modificar costos');
+    const mode = SIGN[b.mode] ? b.mode : 'percent';
+    const value = Number(b.value);
+    if (!Number.isFinite(value) || value === 0) throw bad('Indicá cuánto cambiar (distinto de cero)');
+    if (mode === 'percent' && (value < -90 || value > 1000)) throw bad('El porcentaje tiene que estar entre -90 y 1000');
+    const step = Number(b.round ?? 0);
+    if (!ROUNDINGS.includes(step)) throw bad('Redondeo inválido');
+    const where = ['a.active = 1'], args = [];
+    if (b.brand_id) { where.push('a.brand_id = ?'); args.push(Number(b.brand_id) || 0); }
+    const cat = String(b.category ?? '').trim();
+    if (cat) { where.push('a.category = ? COLLATE NOCASE'); args.push(cat); }
+    const q = String(b.query ?? '').trim();
+    if (q) { where.push('a.name LIKE ?'); args.push(`%${q}%`); }
+    if (b.only_stock) where.push('a.stock > 0');
+    const arts = db.prepare(`SELECT a.id, a.name, a.size, a.color, a.price, a.cost, br.name AS brand FROM articles a LEFT JOIN brands br ON br.id = a.brand_id
+      WHERE ${where.join(' AND ')} ORDER BY br.name, a.name, a.size`).all(...args);
+    const calc = (old) => Math.max(0, mode === 'percent' ? old * (1 + value / 100) : old + value);
+    const items = arts.map((a) => {
+      const np = target === 'cost' ? a.price : round2(step ? Math.round(round2(calc(a.price)) / step) * step : calc(a.price));
+      const nc = target === 'price' ? a.cost : round2(calc(a.cost));
+      return { id: a.id, name: [a.brand, a.name, a.size && `Talle ${a.size}`, a.color].filter(Boolean).join(' · '), old_price: a.price, new_price: np, old_cost: a.cost, new_cost: nc };
+    }).filter((i) => i.new_price !== i.old_price || i.new_cost !== i.old_cost);
+    const desc = `${target === 'price' ? 'Precio' : target === 'cost' ? 'Costo' : 'Precio y costo'} ${value > 0 ? '+' : ''}${value}${SIGN[mode]}${step ? ` (redondeo a ${step})` : ''}${cat ? ` · ${cat}` : ''}${q ? ` · «${q}»` : ''}`;
+    return { items, total: arts.length, target, desc, brand_id: b.brand_id || null };
+  }
+  const maskPriceItems = (items, can) => (can('costos.ver') ? items : items.map(({ old_cost, new_cost, ...r }) => r));
+  route('POST', '/api/prices/preview', 'articulos.editar', ({ body, can }) => {
+    const sel = priceSelection(body, can);
+    return { total: sel.total, changed: sel.items.length, description: sel.desc, items: maskPriceItems(sel.items.slice(0, 150), can) };
+  });
+  route('POST', '/api/prices/apply', 'articulos.editar', ({ body, user, can }) => tx(db, () => {
+    const sel = priceSelection(body, can);
+    if (!sel.items.length) throw bad('Con esos valores no cambia ningún precio');
+    const { lastInsertRowid: batch } = db.prepare('INSERT INTO price_batches (description, count, user_id) VALUES (?,?,?)').run(sel.desc, sel.items.length, user.id);
+    const upd = db.prepare('UPDATE articles SET price=?, cost=? WHERE id=?');
+    const log = db.prepare('INSERT INTO price_changes (batch_id,article_id,old_price,new_price,old_cost,new_cost) VALUES (?,?,?,?,?,?)');
+    for (const i of sel.items) { upd.run(i.new_price, i.new_cost, i.id); log.run(batch, i.id, i.old_price, i.new_price, i.old_cost, i.new_cost); }
+    return { id: batch, changed: sel.items.length, description: sel.desc };
+  }));
+  route('GET', '/api/prices/history', 'articulos.editar', () =>
+    db.prepare(`SELECT b.id, b.description, b.count, b.undone, b.created_at, b.undone_at, u.name AS user_name FROM price_batches b LEFT JOIN users u ON u.id = b.user_id
+      ORDER BY b.id DESC LIMIT 15`).all().map((r) => ({ ...r })));
+  route('POST', '/api/prices/undo', 'articulos.editar', ({ user }) => tx(db, () => {
+    const b = db.prepare('SELECT * FROM price_batches WHERE undone = 0 ORDER BY id DESC LIMIT 1').get();
+    if (!b) throw bad('No hay cambios de precios para deshacer');
+    const rows = db.prepare('SELECT * FROM price_changes WHERE batch_id=?').all(b.id);
+    const upd = db.prepare('UPDATE articles SET price=?, cost=? WHERE id=?');
+    for (const r of rows) upd.run(r.old_price, r.old_cost, r.article_id);
+    db.prepare("UPDATE price_batches SET undone=1, undone_at=datetime('now','localtime') WHERE id=?").run(b.id);
+    return { id: b.id, restored: rows.length, description: b.description, user: user.name };
+  }));
+
   // Reportes: ver en pantalla, imprimir (PDF) o bajar a Excel.
   const allowedReports = (can) => REPORTS.filter((r) => r.perm.some(can));
   const reportFor = (kind, query, can) => {

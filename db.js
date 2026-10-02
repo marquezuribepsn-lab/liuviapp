@@ -224,6 +224,27 @@ export function openDb(path = defaultDbPath()) {
 
     -- Apartados (señas): la mercadería queda reservada a nombre del cliente hasta que complete el pago.
     -- Recién al completarse se genera la venta (y sale del stock). Las señas no pasan por la cuenta corriente.
+    -- Cambios masivos de precios: cada tanda se puede deshacer (guarda los valores anteriores).
+    CREATE TABLE IF NOT EXISTS price_batches (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      description TEXT NOT NULL,
+      count       INTEGER NOT NULL,
+      user_id     INTEGER,
+      undone      INTEGER NOT NULL DEFAULT 0,
+      created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+      undone_at   TEXT
+    );
+    CREATE TABLE IF NOT EXISTS price_changes (
+      id         INTEGER PRIMARY KEY,
+      batch_id   INTEGER NOT NULL REFERENCES price_batches(id),
+      article_id INTEGER NOT NULL REFERENCES articles(id),
+      old_price  REAL NOT NULL,
+      new_price  REAL NOT NULL,
+      old_cost   REAL NOT NULL,
+      new_cost   REAL NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_price_changes_batch ON price_changes(batch_id);
+
     CREATE TABLE IF NOT EXISTS layaways (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       customer_id INTEGER NOT NULL REFERENCES customers(id),
