@@ -12,6 +12,36 @@ async function api(method, path, body) {
   if (!res.ok) { const err = new Error(data?.error || 'Error de servidor'); err.locked = !!data?.locked; throw err; }
   return data;
 }
+// Cuadros de diálogo propios (reemplazan los de «localhost dice» del navegador).
+// buttons: [{ label, value, kind: 'primary' | 'ghost' | 'danger' }]; el primero con primary:true responde al Enter. Esc = cancelar.
+function ask({ title = 'Liu Vi', text = '', input = null, buttons, stack = false }) {
+  return new Promise((resolve) => {
+    const d = $('#uiDialog'), box = $('#uiButtons'), inp = $('#uiInput');
+    $('#uiTitle').textContent = title; $('#uiText').textContent = text;
+    inp.hidden = input === null; inp.value = input ?? '';
+    box.className = 'row end' + (stack ? ' stack' : '');
+    box.innerHTML = '';
+    const cancelValue = (buttons.find((b) => b.cancel) || buttons.at(-1)).value;
+    let done = false;
+    const finish = (v) => { if (done) return; done = true; d.close(); resolve(v); };
+    for (const b of buttons) {
+      const el = document.createElement('button');
+      el.type = 'button'; el.textContent = b.label; el.className = b.kind || 'ghost'; if (b.kind === 'danger') el.classList.add('danger');
+      el.addEventListener('click', () => finish(input !== null && b.value === true ? inp.value : b.value));
+      box.append(el);
+    }
+    d.oncancel = (e) => { e.preventDefault(); finish(input !== null ? null : cancelValue); };
+    d.onkeydown = (e) => { if (e.key === 'Enter' && !e.target.matches('button')) { e.preventDefault(); const p = box.querySelector('.primary, .danger'); if (p) p.click(); } };
+    d.showModal();
+    (input !== null ? inp : box.querySelector('.primary, .danger') || box.firstChild).focus();
+    if (input !== null) inp.select();
+  });
+}
+const uiConfirm = (text, { title = 'Liu Vi', ok = 'Aceptar', cancel = 'Cancelar', danger = false } = {}) =>
+  ask({ title, text, buttons: [{ label: ok, value: true, kind: danger ? 'danger' : 'primary' }, { label: cancel, value: false, kind: 'ghost', cancel: true }] });
+const uiAlert = (text, title = 'Liu Vi') => ask({ title, text, buttons: [{ label: 'Aceptar', value: true, kind: 'primary' }] });
+const uiPrompt = (text, def = '', { title = 'Liu Vi', ok = 'Aceptar' } = {}) =>
+  ask({ title, text, input: def, buttons: [{ label: ok, value: true, kind: 'primary' }, { label: 'Cancelar', value: null, kind: 'ghost', cancel: true }] });
 let toastTimer;
 function toast(msg, error = false) {
   const t = $('#toast');
@@ -142,21 +172,21 @@ async function holdCart(label) {
 }
 $('#holdSale').addEventListener('click', guard(async () => {
   if (!cart.length) throw new Error('No hay nada para poner en espera');
-  const label = prompt('Nombre para reconocer esta venta (opcional)', saleCustomer?.name || '');
+  const label = await uiPrompt('Nombre para reconocer esta venta (opcional)', saleCustomer?.name || '', { title: 'Poner en espera', ok: 'Poner en espera' });
   if (label === null) return;
   await holdCart(label.trim());
   resetSale(); toast('Venta puesta en espera: retomala desde arriba cuando quieras'); await loadHeld();
 }));
 $('#heldBar').addEventListener('click', guard(async (e) => {
   const drop = e.target.dataset.hdrop, resume = e.target.dataset.hresume;
-  if (drop && confirm('¿Descartar esta venta en espera? Se pierde el carrito guardado.')) {
+  if (drop && await uiConfirm('Se pierde el carrito guardado.', { title: '¿Descartar esta venta en espera?', ok: 'Descartar', danger: true })) {
     await api('DELETE', '/held/' + drop);
     if (Number(drop) === heldId) heldId = null;
     return loadHeld();
   }
   if (!resume) return;
   if (cart.length) {
-    if (!confirm('Tenés una venta en curso. ¿Ponerla en espera para retomar esta?')) return;
+    if (!await uiConfirm('¿Ponerla en espera para retomar esta?', { title: 'Tenés una venta en curso', ok: 'Ponerla en espera' })) return;
     await holdCart(saleCustomer?.name || '');
   }
   const h = await api('GET', '/held/' + resume);
@@ -420,11 +450,11 @@ $('#brandForm').addEventListener('submit', guard(async (e) => {
 $('#brandsTable').addEventListener('click', guard(async (e) => {
   const d = e.target.dataset;
   if (d.brename) {
-    const name = prompt('Nuevo nombre de la marca:', d.name);
+    const name = await uiPrompt('Nuevo nombre de la marca:', d.name, { title: 'Renombrar marca', ok: 'Guardar' });
     if (name === null) return;
     await api('PUT', '/brands/' + d.brename, { name }); toast('Marca renombrada'); await loadArticles();
   }
-  if (d.bdel && confirm('¿Borrar esta marca? Solo se puede si no tiene artículos.')) { await api('DELETE', '/brands/' + d.bdel); toast('Marca borrada'); await loadBrands(); }
+  if (d.bdel && await uiConfirm('Solo se puede si no tiene artículos.', { title: '¿Borrar esta marca?', ok: 'Borrar', danger: true })) { await api('DELETE', '/brands/' + d.bdel); toast('Marca borrada'); await loadBrands(); }
 }));
 $('#artSearch').addEventListener('input', debounce(guard(loadArticles)));
 $('#artLow').addEventListener('change', guard(loadArticles));
@@ -458,7 +488,7 @@ $('#artForm').addEventListener('submit', guard(async (e) => {
 $('#artTable').addEventListener('click', guard(async (e) => {
   if (e.target.dataset.lbl) { addLabel(window._arts.find((a) => a.id == e.target.dataset.lbl)); showTab('etiquetas'); return; }
   if (e.target.dataset.edit) openArtDialog(window._arts.find((a) => a.id == e.target.dataset.edit));
-  if (e.target.dataset.del && confirm('¿Dar de baja este artículo? Se conserva el historial de ventas.')) {
+  if (e.target.dataset.del && await uiConfirm('Se conserva el historial de ventas.', { title: '¿Dar de baja este artículo?', ok: 'Dar de baja', danger: true })) {
     await api('DELETE', '/articles/' + e.target.dataset.del); await loadArticles();
   }
 }));
@@ -718,10 +748,10 @@ $('#movForm').addEventListener('submit', guard(async (e) => {
 }));
 $('#closeForm').addEventListener('submit', guard(async (e) => {
   e.preventDefault();
-  if (!confirm('¿Cerrar la caja? No se podrán registrar ventas hasta abrir una nueva.')) return;
+  if (!await uiConfirm('No se podrán registrar ventas hasta abrir una nueva.', { title: '¿Cerrar la caja?', ok: 'Cerrar caja', danger: true })) return;
   const r = await api('POST', '/cash/close', { counted: Number($('#closeCounted').value), note: $('#closeNote').value });
   e.target.reset();
-  alert(`Caja cerrada.\nEsperado: ${money(r.expected_cash)}\nContado: ${money(r.counted_cash)}\nDiferencia: ${money(r.difference)}`);
+  await uiAlert(`Esperado: ${money(r.expected_cash)}\nContado: ${money(r.counted_cash)}\nDiferencia: ${money(r.difference)}`, 'Caja cerrada');
   await loadCash();
 }));
 $('#retTable').addEventListener('click', (e) => { const r = window._rets.find((x) => x.id == e.target.dataset.rprint); if (r) printReturn(r); });
@@ -736,7 +766,7 @@ $('#salesTable').addEventListener('click', guard(async (e) => {
     if (s) openReturnDialog(s);
     return;
   }
-  if (e.target.dataset.void && confirm('¿Anular la venta? Se devuelve el stock y se registra el egreso en caja.')) {
+  if (e.target.dataset.void && await uiConfirm('Se devuelve el stock y se registra el egreso en caja.', { title: '¿Anular la venta?', ok: 'Anular venta', danger: true })) {
     await api('POST', `/sales/${e.target.dataset.void}/void`); toast('Venta anulada'); await loadCash();
   }
 }));
@@ -1165,7 +1195,7 @@ $('#roleList').addEventListener('click', guard(async (e) => {
     await api('PUT', '/roles/' + card.dataset.role, { name: $('[data-rname]', card).value, permissions: readPerms(card) });
     toast('Rol actualizado: los cambios ya rigen'); return loadUsers();
   }
-  if (e.target.dataset.rdel !== undefined && confirm('¿Eliminar este rol?')) { await api('DELETE', '/roles/' + card.dataset.role); toast('Rol eliminado'); return loadUsers(); }
+  if (e.target.dataset.rdel !== undefined && await uiConfirm('Los usuarios con este rol deben reasignarse antes.', { title: '¿Eliminar este rol?', ok: 'Eliminar', danger: true })) { await api('DELETE', '/roles/' + card.dataset.role); toast('Rol eliminado'); return loadUsers(); }
 }));
 let editingUser = null;
 function openUserDialog(u) {
@@ -1246,7 +1276,7 @@ $('#gdBox').addEventListener('click', guard(async (e) => {
   const id = e.target.id;
   if (id === 'gdRun') await backupNow();
   if (id === 'gdOn') { const { url } = await api('POST', '/backup/google/start', {}); location.href = url; }
-  if (id === 'gdOff' && confirm('¿Desconectar Google Drive? Las copias que ya están en tu Drive no se borran.')) { renderBackup(await api('POST', '/backup/google/disconnect', {})); toast('Google Drive desconectado'); }
+  if (id === 'gdOff' && await uiConfirm('Las copias que ya están en tu Drive no se borran.', { title: '¿Desconectar Google Drive?', ok: 'Desconectar', danger: true })) { renderBackup(await api('POST', '/backup/google/disconnect', {})); toast('Google Drive desconectado'); }
   if (id === 'gdCreds') renderGoogle({ configured: false });
 }));
 $('#gdBox').addEventListener('submit', async (e) => {
