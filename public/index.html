@@ -85,37 +85,41 @@
       <div id="heldBar" class="heldBar" hidden></div>
       <h2>Venta actual</h2>
       <table id="cart"><thead><tr><th>Artículo</th><th>Cant.</th><th>Precio</th><th>Subtotal</th><th></th></tr></thead><tbody></tbody></table>
-      <div class="totals">
-        <label class="inline"><input type="checkbox" id="autoTicket"> Imprimir comprobante al cobrar</label>
-        <div id="custBox">
-          <label>Cliente (opcional) <input id="custSearch" autocomplete="off" placeholder="Buscar por nombre, DNI o teléfono"></label>
-          <div id="custResults" class="list"></div>
-          <div id="custChip" class="custChip" hidden></div>
+      <div id="custBox">
+        <label>Cliente (opcional) <input id="custSearch" autocomplete="off" placeholder="Buscar por nombre, DNI o teléfono"></label>
+        <div id="custResults" class="list"></div>
+        <div id="custChip" class="custChip" hidden></div>
+      </div>
+      <div class="adjRow">
+        <div class="adj"><span>Descuento</span>
+          <div class="adjIn"><input id="discVal" type="number" min="0" step="0.01" placeholder="0" inputmode="decimal">
+            <div class="seg mini" id="discType"><button type="button" class="active" data-t="pct">%</button><button type="button" data-t="amt">$</button></div></div></div>
+        <div class="adj"><span>Recargo</span>
+          <div class="adjIn"><input id="sureVal" type="number" min="0" step="0.01" placeholder="0" inputmode="decimal">
+            <div class="seg mini" id="sureType"><button type="button" class="active" data-t="pct">%</button><button type="button" data-t="amt">$</button></div></div></div>
+      </div>
+      <div class="sums">
+        <div><span>Subtotal</span><b id="subtotal">$0</b></div>
+        <div id="discLine" hidden><span>Descuento</span><b id="discShow"></b></div>
+        <div id="sureLine" hidden><span>Recargo</span><b id="sureShow"></b></div>
+        <div class="grand"><span>Total</span><b id="total">$0</b></div>
+      </div>
+      <h3>Cobro</h3>
+      <div id="payLines"></div>
+      <div class="row"><button type="button" id="payAdd" class="link">＋ Agregar otro medio de pago</button><span class="grow"></span>
+        <label class="inline"><input type="checkbox" id="autoTicket"> Imprimir comprobante al cobrar</label></div>
+      <div id="payStatus" class="payStatus"></div>
+      <div class="saleActions">
+        <button id="charge" class="primary bigBtn">Cobrar</button>
+        <div class="moreWrap">
+          <button type="button" id="moreBtn" class="ghost plusBtn" title="Más opciones" aria-haspopup="true" aria-expanded="false">＋</button>
+          <div id="moreMenu" class="moreMenu" hidden>
+            <button type="button" id="layaway" title="El cliente deja una seña y la mercadería queda apartada a su nombre">Señar / apartar</button>
+            <button type="button" id="holdSale" title="Guarda esta venta para atender a otro cliente y retomarla después">Poner en espera</button>
+            <button type="button" id="lastTicket">Reimprimir último comprobante</button>
+            <button type="button" id="clearCart">Vaciar venta</button>
+          </div>
         </div>
-        <label>Descuento % <input id="discount" type="number" min="0" max="100" value="0"></label>
-        <div>Subtotal: <b id="subtotal">$0</b></div>
-        <div class="big">Total: <b id="total">$0</b></div>
-      </div>
-      <h3>Medios de pago</h3>
-      <div class="pay">
-        <label>Efectivo <input id="payEfectivo" type="number" min="0" step="0.01"></label>
-        <label>Tarjeta <input id="payTarjeta" type="number" min="0" step="0.01"></label>
-        <label>Transferencia <input id="payTransferencia" type="number" min="0" step="0.01"></label>
-        <label id="payCuentaWrap" hidden>Cuenta del cliente <input id="payCuenta" type="number" min="0" step="0.01"></label>
-      </div>
-      <div class="row">
-        <button class="ghost" data-full="Efectivo">Todo efectivo</button>
-        <button class="ghost" data-full="Tarjeta">Todo tarjeta</button>
-        <button class="ghost" data-full="Transferencia">Todo transferencia</button>
-        <button class="ghost" id="useCredit" hidden>Usar saldo a favor</button>
-      </div>
-      <div id="change" class="muted"></div>
-      <div class="row">
-        <button id="charge" class="primary">Cobrar</button>
-        <button id="layaway" class="ghost" title="El cliente deja una seña y la mercadería queda apartada a su nombre">Señar / apartar</button>
-        <button id="holdSale" class="ghost" title="Guarda esta venta para atender a otro cliente y retomarla después">⏸ Poner en espera</button>
-        <button id="clearCart" class="ghost">Vaciar</button>
-        <button id="lastTicket" class="ghost">Reimprimir último</button>
       </div>
     </div>
   </div>

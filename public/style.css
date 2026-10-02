@@ -183,3 +183,32 @@ body.locked>footer{display:none}
 #uiButtons{flex-wrap:wrap}
 #uiButtons .danger{background:var(--bad);color:#fff;border:0}
 #uiButtons.stack{flex-direction:column;align-items:stretch}#uiButtons.stack button{text-align:left}
+
+/* Panel de venta */
+#custBox{margin:8px 0}
+#custBox label{display:block}#custBox label input{width:100%}
+.adjRow{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:10px 0}
+.adj>span{display:block;font-size:12px;color:var(--muted);margin-bottom:3px}
+.adjIn{display:flex;gap:6px;align-items:stretch}.adjIn input{min-width:0;flex:1;margin:0}
+.seg.mini button{padding:6px 11px}
+.sums{display:grid;gap:3px;margin:8px 0 4px}
+.sums>div{display:flex;justify-content:space-between;align-items:baseline;color:var(--muted)}
+.sums>div b{color:var(--ink);font-size:15px}
+.sums .grand{color:var(--ink);font-size:20px;border-top:1px solid var(--line);padding-top:8px;margin-top:4px}
+.sums .grand b{font-size:32px;color:var(--accent)}
+#discLine b{color:var(--ok)}#sureLine b{color:var(--ink)}
+.payLine{display:grid;grid-template-columns:minmax(120px,1fr) minmax(110px,1fr) auto;gap:8px;align-items:center;margin:6px 0}
+.payLine select,.payLine input{margin:0}
+.payLine input{text-align:right;font-size:17px}
+.payStatus{min-height:34px;margin:6px 0 4px;font-size:20px;font-weight:700;text-align:center;border-radius:10px;padding:6px}
+.payStatus.falta{color:var(--bad);background:color-mix(in srgb,var(--bad) 12%,transparent)}
+.payStatus.vuelto{color:var(--ok);background:color-mix(in srgb,var(--ok) 12%,transparent)}
+.payStatus.ok{color:var(--ok);background:color-mix(in srgb,var(--ok) 12%,transparent)}
+.saleActions{display:flex;gap:10px;margin-top:8px;align-items:stretch}
+.bigBtn{flex:1;font-size:22px;padding:16px 20px;border-radius:12px;font-weight:700}
+.plusBtn{font-size:26px;line-height:1;padding:0 18px;border-radius:12px}
+.moreWrap{position:relative;display:flex}
+.moreMenu{position:absolute;right:0;bottom:calc(100% + 8px);display:grid;gap:2px;min-width:250px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:6px;box-shadow:0 10px 30px #0005;z-index:20}
+.moreMenu button{background:transparent;border:0;text-align:left;padding:10px 12px;border-radius:8px;color:var(--ink);font-size:15px}
+.moreMenu button:hover{background:var(--soft)}
+#cart td:nth-child(2){white-space:nowrap}
