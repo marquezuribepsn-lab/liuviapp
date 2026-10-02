@@ -4,7 +4,7 @@ Ventas, caja, stock, clientes, proveedores, ofertas, reportes y copias de seguri
 
 ## Instalación
 
-**Windows (recomendado)**: `Liu-Vi-Setup-<versión>.exe`. Es un asistente clásico (Siguiente, Siguiente…) que incluye todo lo necesario —no hace falta instalar Node.js— y crea los accesos directos «Liu Vi» (escritorio y menú Inicio). Liu Vi se abre en su propia ventana, sin ventana negra, y corre en segundo plano: para cerrarlo del todo usá «Cerrar Liu Vi» del menú Inicio. Instalar encima de una versión anterior la actualiza y conserva todos los datos. Como el instalador no está firmado digitalmente, Windows puede mostrar un aviso de SmartScreen: *Más información → Ejecutar de todas formas*. Para generar el instalador: `installer/build.sh` (necesita `makensis`; ver el encabezado del script).
+**Windows (recomendado)**: `Liu-Vi-Setup-<versión>.exe`. Es un asistente clásico (Siguiente, Siguiente…) que incluye todo lo necesario —no hace falta instalar Node.js— y crea los accesos directos «Liu Vi» (escritorio y menú Inicio). Liu Vi se abre en su propia ventana, sin ventana negra; al cerrar la ventana el programa se cierra solo (hace una última copia de seguridad si están activadas). «Cerrar Liu Vi» del menú Inicio lo cierra a la fuerza. Instalar encima de una versión anterior la actualiza y conserva todos los datos. Como el instalador no está firmado digitalmente, Windows puede mostrar un aviso de SmartScreen: *Más información → Ejecutar de todas formas*. Para generar el instalador: `installer/build.sh` (necesita `makensis`; ver el encabezado del script).
 
 **Windows, sin instalar**: doble clic en `iniciar.bat` (revisa que Node.js esté instalado, inicia el sistema y abre el navegador; no cierres esa ventana mientras vendés).
 
