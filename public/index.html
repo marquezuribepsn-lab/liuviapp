@@ -459,11 +459,19 @@
       <form id="bkForm">
         <label>Nombre de esta computadora <input id="bkPc" maxlength="60" placeholder="Caja 1"></label>
         <label>Carpeta de copias (ruta completa; vacío = la carpeta de esta computadora) <input id="bkDir"></label>
-        <label class="inline"><input type="checkbox" id="bkAuto" checked> Copia automática (una vez por día y al cerrar la caja)</label>
+        <h3 style="margin-top:14px">Cuándo se hacen las copias</h3>
+        <label class="inline"><input type="checkbox" id="bkAuto" checked> Hacer copias automáticas</label>
+        <div id="bkSched">
+          <label>Veces por día <select id="bkCount" style="width:auto"></select></label>
+          <div id="bkTimes" class="timesGrid" aria-label="Horarios de las copias"></div>
+          <p class="muted" id="bkNext" style="margin:6px 0"></p>
+          <label class="inline"><input type="checkbox" id="bkOnClose" checked> Además, hacer una copia al cerrar la caja</label>
+          <label>Conservar las últimas <select id="bkKeep" style="width:auto"></select> copias <span class="muted" id="bkKeepHint"></span></label>
+        </div>
         <div id="bkError" class="neg"></div>
         <div class="row"><button class="primary">Guardar</button><button type="button" id="bkRun" class="ghost">Hacer copia ahora</button></div>
       </form>
-      <p class="muted">Se conservan las últimas 30 copias. Las copias incluyen contraseñas cifradas de los usuarios: protegé tu cuenta de Google con verificación en dos pasos. La conexión con Google es de esta computadora y no viaja dentro de las copias.</p>
+      <p class="muted">Las copias incluyen contraseñas cifradas de los usuarios: protegé tu cuenta de Google con verificación en dos pasos. La conexión con Google es de esta computadora y no viaja dentro de las copias.</p>
     </div>
     <div class="card">
       <h2>Estado</h2>
@@ -472,14 +480,21 @@
       <table id="bkFiles"><thead><tr><th>Archivo</th><th>Fecha</th><th>Tamaño</th></tr></thead><tbody></tbody></table>
     </div>
   </div>
-  <div class="card">
-    <h2>Cómo restaurar una copia</h2>
-    <ol class="muted" style="margin:0;padding-left:20px">
-      <li>Cerrá el sistema (la ventana negra donde corre).</li>
-      <li>Abrí una consola en la carpeta del programa y ejecutá: <code>npm run restore -- "ruta\de\la\copia.db"</code></li>
-      <li>La base actual no se pierde: queda guardada al lado con «antes-de-restaurar» en el nombre.</li>
-      <li>Volvé a abrir el sistema.</li>
-    </ol>
+  <div class="card" id="restoreCard">
+    <h2>Restaurar datos desde una copia</h2>
+    <p class="muted">Si se perdió o se rompió algo, elegí una copia y los datos vuelven a como estaban en ese momento: artículos, ventas, clientes, usuarios y caja. <b>Se reemplazan todos los datos actuales</b>, pero antes el sistema guarda una copia de lo que hay hoy (por si querés deshacerlo) y se cierra la sesión.</p>
+    <h3>Copias de esta computadora</h3>
+    <div class="scrollBox" style="max-height:260px"><table id="rsLocal"><thead><tr><th>Archivo</th><th>Fecha</th><th>Tamaño</th><th></th></tr></thead><tbody></tbody></table></div>
+    <div class="row">
+      <label class="gFile ghost" title="Por ejemplo, una copia que bajaste de tu Google Drive o que te pasaron en un pendrive">Elegir un archivo de copia de mi computadora…<input type="file" id="rsFile" accept=".db,application/octet-stream" hidden></label>
+      <button type="button" id="rsDriveBtn" class="ghost" hidden>Ver copias en mi Google Drive</button>
+    </div>
+    <div id="rsDrive" hidden>
+      <h3>Copias en Google Drive</h3>
+      <div class="scrollBox" style="max-height:260px"><table id="rsDriveTable"><thead><tr><th>Archivo</th><th>Computadora</th><th>Fecha</th><th>Tamaño</th><th></th></tr></thead><tbody></tbody></table></div>
+    </div>
+    <details style="margin-top:12px"><summary class="muted">Otra forma (consola)</summary>
+      <p class="muted">Con el sistema cerrado, en la carpeta del programa: <code>npm run restore -- "ruta\de\la\copia.db"</code></p></details>
   </div>
 </section>
 

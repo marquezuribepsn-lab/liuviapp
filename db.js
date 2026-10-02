@@ -51,6 +51,29 @@ export function migrateLegacyDb(legacy = join(APP_DIR, 'data', 'liuvi.db'), targ
   return { migrated: true, from: legacy, to: target };
 }
 
+// Permisos nuevos para roles creados antes de cada función (una sola vez por base). Se vuelve a correr al restaurar una copia vieja.
+export function migrateRoles(db) {
+  // Roles creados antes de existir los clientes: los que ya venden pueden buscar, crear y cobrar clientes (el administrador lo ajusta en Usuarios).
+  if (!db.prepare("SELECT 1 FROM settings WHERE key='migr_clientes_v1'").get()) {
+    const NEW = ['clientes.ver', 'clientes.editar', 'clientes.cuenta'];
+    for (const r of db.prepare('SELECT id, permissions, is_admin FROM roles').all()) {
+      let perms; try { perms = JSON.parse(r.permissions); } catch { continue; }
+      if (r.is_admin || !perms.includes('ventas.cobrar')) continue;
+      db.prepare('UPDATE roles SET permissions=? WHERE id=?').run(JSON.stringify([...new Set([...perms, ...NEW])]), r.id);
+    }
+    setSetting(db, 'migr_clientes_v1', '1');
+  }
+  // Idem para cambios y devoluciones: los roles que ya cobran pueden hacerlos.
+  if (!db.prepare("SELECT 1 FROM settings WHERE key='migr_devolver_v1'").get()) {
+    for (const r of db.prepare('SELECT id, permissions, is_admin FROM roles').all()) {
+      let perms; try { perms = JSON.parse(r.permissions); } catch { continue; }
+      if (r.is_admin || !perms.includes('ventas.cobrar')) continue;
+      db.prepare('UPDATE roles SET permissions=? WHERE id=?').run(JSON.stringify([...new Set([...perms, 'ventas.devolver'])]), r.id);
+    }
+    setSetting(db, 'migr_devolver_v1', '1');
+  }
+}
+
 export function openDb(path = defaultDbPath()) {
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
@@ -304,24 +327,6 @@ export function openDb(path = defaultDbPath()) {
     const ins = db.prepare('INSERT INTO roles (name, permissions, is_admin) VALUES (?,?,?)');
     for (const r of DEFAULT_ROLES) ins.run(r.name, JSON.stringify(r.permissions), r.is_admin);
   }
-  // Roles creados antes de existir los clientes: los que ya venden pueden buscar, crear y cobrar clientes (el administrador lo ajusta en Usuarios).
-  if (!db.prepare("SELECT 1 FROM settings WHERE key='migr_clientes_v1'").get()) {
-    const NEW = ['clientes.ver', 'clientes.editar', 'clientes.cuenta'];
-    for (const r of db.prepare('SELECT id, permissions, is_admin FROM roles').all()) {
-      let perms; try { perms = JSON.parse(r.permissions); } catch { continue; }
-      if (r.is_admin || !perms.includes('ventas.cobrar')) continue;
-      db.prepare('UPDATE roles SET permissions=? WHERE id=?').run(JSON.stringify([...new Set([...perms, ...NEW])]), r.id);
-    }
-    setSetting(db, 'migr_clientes_v1', '1');
-  }
-  // Idem para cambios y devoluciones: los roles que ya cobran pueden hacerlos.
-  if (!db.prepare("SELECT 1 FROM settings WHERE key='migr_devolver_v1'").get()) {
-    for (const r of db.prepare('SELECT id, permissions, is_admin FROM roles').all()) {
-      let perms; try { perms = JSON.parse(r.permissions); } catch { continue; }
-      if (r.is_admin || !perms.includes('ventas.cobrar')) continue;
-      db.prepare('UPDATE roles SET permissions=? WHERE id=?').run(JSON.stringify([...new Set([...perms, 'ventas.devolver'])]), r.id);
-    }
-    setSetting(db, 'migr_devolver_v1', '1');
-  }
+  migrateRoles(db);
   return db;
 }

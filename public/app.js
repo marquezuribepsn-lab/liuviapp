@@ -1523,6 +1523,7 @@ async function connectGoogle() {
 function renderBackup(b) {
   $('#bkDir').value = b.custom_dir ? b.dir : ''; $('#bkDir').placeholder = b.default_dir || 'C:\\Users\\Mi nombre\\Mi unidad\\Liuvi';
   $('#bkPc').value = b.pc_name || ''; $('#bkAuto').checked = b.auto; $('#bkError').textContent = '';
+  renderSchedule(b); renderRestore(b);
   renderGoogle(b.google);
   const parts = [];
   if (!b.dir) parts.push('<span class="neg">Sin configurar: todavía no se hacen copias.</span>');
@@ -1534,7 +1535,73 @@ function renderBackup(b) {
   $('#bkFiles tbody').innerHTML = b.files.map((f) => `<tr><td>${esc(f.name)}</td><td>${esc(f.at)}</td><td class="num">${(f.size / 1024).toFixed(0)} KB</td></tr>`).join('') || '<tr><td colspan="3" class="muted">Sin copias en la carpeta</td></tr>';
 }
 async function loadBackup() { renderBackup(await api('GET', '/backup')); }
-const bkBody = () => ({ dir: $('#bkDir').value, auto: $('#bkAuto').checked, pc_name: $('#bkPc').value });
+// Horarios: «veces por día» más un horario editable para cada una.
+const COUNTS = [1, 2, 3, 4, 6, 8, 12, 24];
+function defaultTimes(n) {
+  if (n === 1) return ['22:00'];
+  if (n >= 24) return Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, '0')}:00`);
+  const step = 840 / (n - 1); // entre las 8 y las 22
+  return Array.from({ length: n }, (_, i) => { const m = Math.round((480 + step * i) / 5) * 5; return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`; });
+}
+function renderTimes(times) {
+  $('#bkTimes').innerHTML = times.map((t, i) => `<input type="time" value="${t}" data-bt="${i}" aria-label="Copia ${i + 1}" required>`).join('');
+  $('#bkCount').innerHTML = [...new Set([...COUNTS, times.length])].sort((a, b) => a - b).map((n) => `<option value="${n}"${n === times.length ? ' selected' : ''}>${n}</option>`).join('');
+  updateKeepHint();
+}
+const currentTimes = () => $$('#bkTimes input').map((i) => i.value).filter(Boolean);
+function updateKeepHint() {
+  const per = Math.max(1, $$('#bkTimes input').length), keep = Number($('#bkKeep').value) || 30;
+  $('#bkKeepHint').textContent = `(alcanza para unos ${Math.max(1, Math.round(keep / per))} día${Math.round(keep / per) === 1 ? '' : 's'} de copias)`;
+}
+function renderSchedule(b) {
+  renderTimes(b.times || ['22:00']);
+  $('#bkOnClose').checked = b.on_close !== false;
+  $('#bkKeep').innerHTML = [...new Set([10, 30, 60, 100, 200, 500, b.keep || 30])].sort((x, y) => x - y).map((n) => `<option value="${n}"${n === (b.keep || 30) ? ' selected' : ''}>${n}</option>`).join('');
+  $('#bkSched').hidden = !b.auto;
+  const n = b.next_at;
+  $('#bkNext').textContent = n ? `Próxima copia automática: ${n.slice(0, 10) === new Date().toLocaleDateString('sv-SE') ? 'hoy' : 'mañana'} a las ${n.slice(11)}` : '';
+  updateKeepHint();
+}
+$('#bkAuto').addEventListener('change', () => { $('#bkSched').hidden = !$('#bkAuto').checked; });
+$('#bkCount').addEventListener('change', () => {
+  const n = Number($('#bkCount').value), cur = currentTimes();
+  renderTimes(n < cur.length ? cur.slice(0, n) : n === cur.length ? cur : [...cur, ...defaultTimes(n).filter((t) => !cur.includes(t))].slice(0, n).sort());
+});
+$('#bkKeep').addEventListener('change', updateKeepHint);
+const bkBody = () => ({ dir: $('#bkDir').value, auto: $('#bkAuto').checked, pc_name: $('#bkPc').value, times: currentTimes(), on_close: $('#bkOnClose').checked, keep: Number($('#bkKeep').value) });
+
+// Restaurar una copia: se pide escribir RESTAURAR; los datos se reemplazan y se vuelve a la pantalla de acceso.
+const sizeKb = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+function renderRestore(b) {
+  $('#rsLocal tbody').innerHTML = (b.restore_files || []).map((f) => `<tr><td>${esc(f.name)}${f.kind === 'previa' ? '<br><span class="rsPrevia">Copia de tus datos justo antes de una restauración</span>' : ''}</td><td>${esc(f.at)}</td><td class="num">${sizeKb(f.size)}</td>
+    <td><button class="link" data-rslocal="${esc(f.name)}">Restaurar</button></td></tr>`).join('') || '<tr><td colspan="4" class="muted">Todavía no hay copias en la carpeta</td></tr>';
+  $('#rsDriveBtn').hidden = !b.google?.connected;
+  if (!b.google?.connected) $('#rsDrive').hidden = true;
+}
+async function confirmRestore(what, payload) {
+  const word = await uiPrompt(`Vas a reemplazar TODOS los datos actuales (artículos, ventas, clientes, usuarios y caja) por los de:\n${what}\n\nAntes se guarda una copia de lo que hay hoy y se cierra la sesión.\n\nPara confirmar, escribí RESTAURAR.`, '', { title: '¿Restaurar esta copia?', ok: 'Restaurar' });
+  if (word === null) return;
+  if (word.trim().toUpperCase() !== 'RESTAURAR') return toast('No se restauró nada: hay que escribir RESTAURAR', true);
+  toast('Restaurando…');
+  const r = await api('POST', '/backup/restore', { ...payload, confirm: 'RESTAURAR' });
+  await uiAlert(`Datos restaurados.\nAhora hay ${r.now.articles} artículo(s), ${r.now.sales} venta(s) y ${r.now.users} usuario(s).\nSe guardó una copia de lo anterior: ${r.safety_file.split(/[\\/]/).pop()}\n\nIniciá sesión de nuevo.`, 'Restauración lista');
+  location.reload();
+}
+$('#rsLocal').addEventListener('click', guard(async (e) => { const n = e.target.dataset.rslocal; if (n) await confirmRestore(`la copia ${n}`, { source: 'local', name: n }); }));
+$('#rsFile').addEventListener('change', guard(async (e) => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (!f) return;
+  if (f.size > 24 * 1024 * 1024) throw new Error('El archivo es demasiado grande (máximo 24 MB)');
+  const data = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = rej; r.readAsDataURL(f); });
+  await confirmRestore(`el archivo ${f.name}`, { source: 'upload', data });
+}));
+$('#rsDriveBtn').addEventListener('click', guard(async () => {
+  const list = await api('GET', '/backup/drive-list');
+  $('#rsDrive').hidden = false;
+  $('#rsDriveTable tbody').innerHTML = list.map((f) => `<tr><td>${esc(f.name)}</td><td>${esc(f.pc)}</td><td>${esc((f.created_at || '').slice(0, 16).replace('T', ' '))}</td><td class="num">${sizeKb(f.size)}</td>
+    <td><button class="link" data-rsdrive="${esc(f.id)}" data-n="${esc(f.name)}">Restaurar</button></td></tr>`).join('') || '<tr><td colspan="5" class="muted">No hay copias en tu Drive todavía</td></tr>';
+}));
+$('#rsDriveTable').addEventListener('click', guard(async (e) => { const id = e.target.dataset.rsdrive; if (id) await confirmRestore(`la copia ${e.target.dataset.n} (de Google Drive)`, { source: 'drive', id }); }));
 $('#bkForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   try { renderBackup(await api('PUT', '/backup', bkBody())); toast('Configuración guardada'); }
