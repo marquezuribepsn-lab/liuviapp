@@ -58,8 +58,8 @@ const articleLabel = (a) => [a.brand, a.name, a.size && `Talle ${a.size}`, a.col
 
 // ---------- Pestañas ----------
 let currentTab = 'venta';
-const loaders = { venta: loadCash, clientes: loadCustomers, etiquetas: loadPrintTab, articulos: loadArticles, stock: loadStock, stats: loadStats, usuarios: loadUsers, copias: loadBackup };
-const TAB_PERMS = { venta: ['ventas.cobrar', 'caja.ver', 'caja.operar'], clientes: ['clientes.ver'], articulos: ['articulos.ver'], etiquetas: ['articulos.ver'], stock: ['stock.ver'], stats: ['estadisticas.ver'], usuarios: ['usuarios.admin'], copias: ['sistema.copias'] };
+const loaders = { inicio: loadDashboard, venta: loadCash, clientes: loadCustomers, etiquetas: loadPrintTab, articulos: loadArticles, stock: loadStock, stats: loadStats, usuarios: loadUsers, copias: loadBackup };
+const TAB_PERMS = { inicio: ['estadisticas.ver', 'caja.ver'], venta: ['ventas.cobrar', 'caja.ver', 'caja.operar'], clientes: ['clientes.ver'], articulos: ['articulos.ver'], etiquetas: ['articulos.ver'], stock: ['stock.ver'], stats: ['estadisticas.ver'], usuarios: ['usuarios.admin'], copias: ['sistema.copias'] };
 function showTab(name) {
   currentTab = name;
   $$('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
@@ -1099,6 +1099,49 @@ $('#retForm').addEventListener('submit', async (e) => {
     printReturn(r);
   } catch (err) { $('#retError').textContent = err.message; }
 });
+
+// ---------- Inicio (panel) ----------
+const DAY_NAMES = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
+async function loadDashboard() {
+  const d = await api('GET', '/dashboard');
+  const h = new Date().getHours();
+  $('#dashHello').textContent = `${h < 12 ? 'Buen día' : h < 20 ? 'Buenas tardes' : 'Buenas noches'}, ${me.user.name.split(' ')[0]}`;
+  // Avisos que conviene ver apenas se abre el sistema.
+  const alerts = [];
+  if (d.cash && !d.cash.open) alerts.push(['warn', 'La caja está cerrada.']);
+  if (d.backup) {
+    if (!d.backup.configured) alerts.push(['bad', 'Todavía no configuraste las copias de seguridad.']);
+    else if (d.backup.error) alerts.push(['bad', `La última copia de seguridad falló: ${d.backup.error}`]);
+    else if (d.backup.auto && d.backup.last_at && Date.now() - new Date(d.backup.last_at.replace(' ', 'T')).getTime() > 3 * 86_400_000) alerts.push(['warn', `Hace más de 3 días que no se hace una copia de seguridad (última: ${d.backup.last_at}).`]);
+  }
+  $('#dashAlerts').innerHTML = alerts.map(([k, t]) => `<div class="dash-alert ${k}">${esc(t)}</div>`).join('');
+  const diff = d.today.yesterday ? Math.round(((d.today.total - d.today.yesterday) / d.today.yesterday) * 100) : null;
+  const kpis = [
+    ['Vendido hoy', money(d.today.total), diff === null ? 'ayer sin ventas' : `${diff >= 0 ? '▲' : '▼'} ${Math.abs(diff)}% vs. ayer`],
+    ['Ventas de hoy', d.today.sales, d.today.sales ? `ticket prom. ${money(d.today.total / d.today.sales)}` : ''],
+  ];
+  if (d.today.profit !== null) kpis.push(['Ganancia de hoy', money(d.today.profit), '']);
+  if (d.cash?.open) kpis.push(['Efectivo en caja', money(d.cash.expected_cash), `abierta ${time(d.cash.opened_at)}`]);
+  if (d.lowStock) kpis.push(['Stock bajo', d.lowStock.count, 'artículos']);
+  if (d.debts) kpis.push(['Te deben', money(d.debts.total), `${d.debts.count} cliente${d.debts.count === 1 ? '' : 's'}`]);
+  if (d.layaways) kpis.push(['Señas abiertas', d.layaways.count, d.layaways.count ? `faltan cobrar ${money(d.layaways.pending)}` : '']);
+  $('#dashKpis').innerHTML = kpis.map(([k, v, sub]) => `<div class="kpi"><span>${k}</span><b>${v}</b>${sub ? `<small>${esc(String(sub))}</small>` : ''}</div>`).join('');
+  $('#dashWeekCard').hidden = $('#dashTopCard').hidden = !d.week;
+  if (d.week) {
+    const max = Math.max(1, ...d.week.map((x) => x.total));
+    $('#dashWeek').innerHTML = `<div class="chart small">${d.week.map((x) => `<div class="bar" title="${esc(x.day)}: ${money(x.total)}"><small>${money(x.total).replace(/\s/g, '')}</small><i style="height:${Math.round((Math.max(0, x.total) / max) * 85)}%"></i><em>${DAY_NAMES[new Date(x.day + 'T12:00').getDay()]} ${x.day.slice(8)}</em></div>`).join('')}</div><p class="muted" style="margin:8px 0 0">Total de la semana: <b>${money(d.weekTotal)}</b></p>`;
+    $('#dashTop tbody').innerHTML = d.top.map((t) => `<tr><td>${esc(t.name)}</td><td class="num">${t.units} u.</td></tr>`).join('') || '<tr><td class="muted">Todavía no hay ventas esta semana</td></tr>';
+  }
+  $('#dashLowCard').hidden = !d.lowStock;
+  if (d.lowStock) $('#dashLow').innerHTML = d.lowStock.items.length
+    ? `<table><tbody>${d.lowStock.items.map((a) => `<tr><td>${esc([a.name, a.size && `Talle ${a.size}`, a.color].filter(Boolean).join(' · '))}</td><td class="num">${a.stock} u.</td></tr>`).join('')}</tbody></table>${d.lowStock.count > d.lowStock.items.length ? `<p class="muted" style="margin:8px 0 0">y ${d.lowStock.count - d.lowStock.items.length} más en la pestaña Stock</p>` : ''}`
+    : '<span class="muted">Nada con stock bajo 👌</span>';
+  $('#dashDebtCard').hidden = !d.debts;
+  if (d.debts) $('#dashDebt').innerHTML = d.debts.top.length
+    ? `<table><tbody>${d.debts.top.map((c) => `<tr><td>${esc(c.name)}</td><td class="num">${money(-c.balance)}</td></tr>`).join('')}</tbody></table>${d.debts.count > d.debts.top.length ? `<p class="muted" style="margin:8px 0 0">y ${d.debts.count - d.debts.top.length} más en Clientes</p>` : ''}`
+    : '<span class="muted">Nadie debe nada 👌</span>';
+}
+$('#dashRefresh').addEventListener('click', guard(loadDashboard));
 
 // ---------- Estadísticas ----------
 let group = 'day';

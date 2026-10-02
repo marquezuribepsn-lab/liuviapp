@@ -43,6 +43,7 @@
 <header>
   <h1><img class="logo" src="/img/logo-blanco.png" alt="Liu Vi"></h1>
   <nav id="tabs">
+    <button data-tab="inicio">Inicio</button>
     <button data-tab="venta" class="active">Ventas y caja</button>
     <button data-tab="clientes">Clientes</button>
     <button data-tab="articulos">Artículos</button>
@@ -68,7 +69,22 @@
 <main>
 
 <!-- VENTAS Y CAJA -->
-<section id="venta" class="tab">
+<!-- INICIO -->
+<section id="inicio" class="tab" hidden>
+  <div class="row"><h2 id="dashHello" style="margin:0;flex:1">Resumen del día</h2><button id="dashRefresh" class="ghost">Actualizar</button></div>
+  <div id="dashAlerts"></div>
+  <div id="dashKpis" class="kpis"></div>
+  <div class="split">
+    <div class="card" id="dashWeekCard"><h2>Últimos 7 días</h2><div id="dashWeek"></div></div>
+    <div class="card" id="dashTopCard"><h2>Más vendidos (7 días)</h2><table id="dashTop"><tbody></tbody></table></div>
+  </div>
+  <div class="split">
+    <div class="card" id="dashLowCard"><h2>Stock bajo</h2><div id="dashLow"></div></div>
+    <div class="card" id="dashDebtCard"><h2>Cuentas pendientes</h2><div id="dashDebt"></div></div>
+  </div>
+</section>
+
+<section id="venta" class="tab" hidden>
   <div id="cajaClosed" class="card" hidden>
     <h2>Caja cerrada</h2>
     <form id="openForm" class="row"><label>Monto inicial en efectivo <input id="openAmount" type="number" min="0" step="0.01" value="0"></label><button class="primary">Abrir caja</button></form>

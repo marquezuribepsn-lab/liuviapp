@@ -116,14 +116,13 @@ test('copia programada: se dispara en el horario y el aviso «Respaldando» qued
   const t = await start();
   const dir = tmp();
   try {
-    await t.admin('PUT', '/api/backup', { dir, times: ['08:00', '20:00'] });
+    await t.admin('PUT', '/api/backup', { dir, times: ['00:00', '23:59'] });
     const b = t.app.backups;
     const at = (h, m) => { const d = new Date(); d.setHours(h, m, 0, 0); return d; };
-    assert.ok(b.check(at(12, 0)), 'pasadas las 08:00 se hace la copia sola');
-    assert.equal(b.check(at(12, 5)), null, 'no repite en el mismo horario');
-    assert.ok(b.check(at(23, 0)), 'pasadas las 20:00 se hace otra copia');
-    assert.equal(readdirSync(dir).filter((f) => f.startsWith('liuvi-backup-')).length, 2);
-    assert.equal(b.check(at(23, 30)), null, 'no repite en el mismo horario');
+    assert.equal(b.check(at(12, 0)), null, 'al guardar los horarios no se hace una copia al instante');
+    assert.ok(b.check(at(23, 59)), 'llegado el horario se hace la copia sola');
+    assert.equal(b.check(at(23, 59)), null, 'no repite en el mismo horario');
+    assert.equal(readdirSync(dir).filter((f) => f.startsWith('liuvi-backup-')).length, 1);
     const act = (await t.client().call('GET', '/api/backup/activity')).data;
     assert.equal(act.show, true);
     assert.equal(act.ok, true);
