@@ -199,6 +199,39 @@ export function openDb(path = defaultDbPath()) {
       created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime'))
     );
 
+    -- Apartados (señas): la mercadería queda reservada a nombre del cliente hasta que complete el pago.
+    -- Recién al completarse se genera la venta (y sale del stock). Las señas no pasan por la cuenta corriente.
+    CREATE TABLE IF NOT EXISTS layaways (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id INTEGER NOT NULL REFERENCES customers(id),
+      status      TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','completed','cancelled')),
+      total       REAL NOT NULL,
+      note        TEXT NOT NULL DEFAULT '',
+      user_id     INTEGER,
+      sale_id     INTEGER REFERENCES sales(id),
+      cancel_note TEXT NOT NULL DEFAULT '',
+      created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+      closed_at   TEXT
+    );
+    CREATE TABLE IF NOT EXISTS layaway_items (
+      id         INTEGER PRIMARY KEY,
+      layaway_id INTEGER NOT NULL REFERENCES layaways(id),
+      article_id INTEGER NOT NULL REFERENCES articles(id),
+      name       TEXT NOT NULL,
+      qty        INTEGER NOT NULL CHECK (qty > 0),
+      price      REAL NOT NULL            -- el precio queda fijo desde el día de la seña
+    );
+    CREATE TABLE IF NOT EXISTS layaway_payments (
+      id         INTEGER PRIMARY KEY,
+      layaway_id INTEGER NOT NULL REFERENCES layaways(id),
+      amount     REAL NOT NULL CHECK (amount > 0),
+      method     TEXT NOT NULL,           -- efectivo | tarjeta | transferencia | cuenta (saldo a favor del cliente)
+      user_id    INTEGER,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_layaway_items_article ON layaway_items(article_id);
+    CREATE INDEX IF NOT EXISTS idx_layaway_status ON layaways(status);
+
     CREATE TABLE IF NOT EXISTS brands (
       id   INTEGER PRIMARY KEY,
       name TEXT NOT NULL UNIQUE COLLATE NOCASE
@@ -246,6 +279,7 @@ export function openDb(path = defaultDbPath()) {
   ensureColumn('sales', 'customer_name');
   ensureColumn('sales', 'customer_doc');
   ensureColumn('sales', 'customer_id');
+  ensureColumn('sales', 'prepaid_amount', 'REAL NOT NULL DEFAULT 0'); // parte de la venta ya cobrada como seña de un apartado
   ensureColumn('sales', 'exchange_amount', 'REAL NOT NULL DEFAULT 0'); // parte de la venta cubierta por mercadería devuelta (cambio)
   ensureColumn('sales', 'account_amount', 'REAL NOT NULL DEFAULT 0'); // parte de la venta pagada con la cuenta del cliente
   ensureColumn('cash_movements', 'user_id');
