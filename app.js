@@ -27,10 +27,15 @@ const bad = (msg) => new HttpError(400, msg);
 const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const round2 = (n) => Math.round(n * 100) / 100;
 
+// Las operaciones son síncronas: si ya hay una transacción abierta, la función se suma a ella.
+let txDepth = 0;
 function tx(db, fn) {
+  if (txDepth) return fn();
   db.exec('BEGIN IMMEDIATE');
+  txDepth++;
   try { const r = fn(); db.exec('COMMIT'); return r; }
   catch (e) { db.exec('ROLLBACK'); throw e; }
+  finally { txDepth--; }
 }
 
 function num(v, name, { min = 0, int = false } = {}) {
@@ -98,6 +103,7 @@ export function createApp(db, opts = {}) {
     const byMethod = sessionTotals(s.id);
     const who = (id) => (id ? db.prepare('SELECT name FROM users WHERE id=?').get(id)?.name ?? null : null);
     const sales = db.prepare('SELECT COUNT(*) n, COALESCE(SUM(total),0) t FROM sales WHERE session_id=? AND voided=0').get(s.id);
+    sales.t = round2(sales.t - db.prepare('SELECT COALESCE(SUM(value),0) AS v FROM returns WHERE session_id=?').get(s.id).v); // neto de devoluciones
     return {
       ...s, byMethod, opened_by_name: who(s.opened_by), closed_by_name: who(s.closed_by),
       sales_count: sales.n, sales_total: sales.t,
@@ -360,7 +366,7 @@ export function createApp(db, opts = {}) {
   const CUSTOMER_LIST = `
     SELECT c.*, COALESCE((SELECT SUM(amount) FROM account_movements WHERE customer_id=c.id),0) AS balance,
       (SELECT COUNT(*) FROM sales WHERE customer_id=c.id AND voided=0) AS sales_count,
-      COALESCE((SELECT SUM(total) FROM sales WHERE customer_id=c.id AND voided=0),0) AS sales_total,
+      COALESCE((SELECT SUM(total) FROM sales WHERE customer_id=c.id AND voided=0),0) - COALESCE((SELECT SUM(value) FROM returns WHERE customer_id=c.id),0) AS sales_total,
       (SELECT MAX(created_at) FROM sales WHERE customer_id=c.id AND voided=0) AS last_sale
     FROM customers c`;
   function customerFields(b, cur = {}) {
@@ -439,7 +445,8 @@ export function createApp(db, opts = {}) {
   }));
 
   // Ventas
-  route('POST', '/api/sales', 'ventas.cobrar', ({ body, user, can }) => {
+  // `exchange`: parte del total cubierta por mercadería devuelta (cambios).
+  function createSale(body, user, can, exchange = 0) {
     const items = Array.isArray(body.items) ? body.items : [];
     if (!items.length) throw bad('La venta no tiene artículos');
     const payments = (Array.isArray(body.payments) ? body.payments : []).map((p) => {
@@ -447,7 +454,7 @@ export function createApp(db, opts = {}) {
       return { method: p.method, amount: num(p.amount, 'Monto de pago') };
     }).filter((p) => p.amount > 0);
     const accountAmount = round2(num(body.account_amount ?? 0, 'Monto de cuenta corriente'));
-    if (!payments.length && accountAmount <= 0) throw bad('Indicá el medio de pago');
+    if (!payments.length && accountAmount <= 0 && !exchange) throw bad('Indicá el medio de pago');
     const discountPct = num(body.discount_pct ?? 0, 'Descuento');
     if (discountPct > 100) throw bad('Descuento inválido');
 
@@ -485,7 +492,7 @@ export function createApp(db, opts = {}) {
           throw bad(balance > 0 ? `El saldo a favor del cliente es ${money(balance)}` : 'El cliente no tiene saldo a favor');
         }
       }
-      const paid = round2(payments.reduce((s, p) => s + p.amount, 0) + accountAmount);
+      const paid = round2(payments.reduce((s, p) => s + p.amount, 0) + accountAmount + exchange);
       if (paid < total) throw bad(`Falta cobrar ${round2(total - paid).toFixed(2)}`);
       let change = round2(paid - total);
       if (change > 0) {
@@ -499,8 +506,8 @@ export function createApp(db, opts = {}) {
       const customerName = customer ? customer.name : String(body.customer_name ?? '').trim().slice(0, 120);
       const customerDoc = customer ? customer.doc : String(body.customer_doc ?? '').trim().slice(0, 30);
       const { lastInsertRowid: saleId } = db.prepare(
-        'INSERT INTO sales (session_id,subtotal,discount,total,user_id,customer_name,customer_doc,customer_id,account_amount) VALUES (?,?,?,?,?,?,?,?,?)')
-        .run(session.id, subtotal, discount, total, user.id, customerName, customerDoc, customer?.id ?? null, accountAmount);
+        'INSERT INTO sales (session_id,subtotal,discount,total,user_id,customer_name,customer_doc,customer_id,account_amount,exchange_amount) VALUES (?,?,?,?,?,?,?,?,?,?)')
+        .run(session.id, subtotal, discount, total, user.id, customerName, customerDoc, customer?.id ?? null, accountAmount, exchange);
       if (accountAmount > 0) {
         db.prepare('INSERT INTO account_movements (customer_id,amount,concept,sale_id,user_id) VALUES (?,?,?,?,?)')
           .run(customer.id, -accountAmount, `Venta #${saleId}`, saleId, user.id);
@@ -516,17 +523,20 @@ export function createApp(db, opts = {}) {
         db.prepare('INSERT INTO cash_movements (session_id,type,method,amount,concept,sale_id,user_id) VALUES (?,?,?,?,?,?,?)')
           .run(session.id, 'ingreso', p.method, p.amount, `Venta #${saleId}`, saleId, user.id);
       }
-      return { status: 201, data: { id: saleId, subtotal, discount, total, change, account_amount: accountAmount, payments: finalPayments } };
+      return { status: 201, data: { id: saleId, subtotal, discount, total, change, account_amount: accountAmount, exchange_amount: exchange, payments: finalPayments } };
     });
-  });
+  }
+  route('POST', '/api/sales', 'ventas.cobrar', ({ body, user, can }) => createSale(body, user, can));
 
   route('GET', '/api/sales', ['ventas.cobrar', 'caja.ver'], ({ query }) => {
     const date = query.get('date') || new Date().toLocaleDateString('sv-SE');
     const sales = db.prepare(`SELECT s.*, u.name AS seller FROM sales s LEFT JOIN users u ON u.id = s.user_id
       WHERE date(s.created_at) = ? ORDER BY s.id DESC`).all(date);
     for (const s of sales) {
-      s.items = db.prepare('SELECT name,qty,price FROM sale_items WHERE sale_id=?').all(s.id);
+      s.items = db.prepare(`SELECT i.id, i.name, i.qty, i.price,
+        COALESCE((SELECT SUM(qty) FROM return_items WHERE sale_item_id = i.id),0) AS returned FROM sale_items i WHERE i.sale_id=?`).all(s.id);
       s.payments = db.prepare('SELECT method,amount FROM sale_payments WHERE sale_id=?').all(s.id);
+      s.returned_value = round2(db.prepare('SELECT COALESCE(SUM(value),0) AS v FROM returns WHERE sale_id=?').get(s.id).v);
     }
     return sales;
   });
@@ -536,6 +546,8 @@ export function createApp(db, opts = {}) {
     const sale = db.prepare('SELECT * FROM sales WHERE id=?').get(params.id);
     if (!sale) throw new HttpError(404, 'Venta no encontrada');
     if (sale.voided) throw new HttpError(409, 'La venta ya está anulada');
+    if (db.prepare('SELECT 1 FROM returns WHERE sale_id=?').get(sale.id)) throw new HttpError(409, 'La venta tiene devoluciones: no se puede anular');
+    if (sale.exchange_amount > 0) throw new HttpError(409, 'Esta venta es parte de un cambio: no se puede anular');
     db.prepare('UPDATE sales SET voided=1 WHERE id=?').run(sale.id);
     for (const it of db.prepare('SELECT * FROM sale_items WHERE sale_id=?').all(sale.id)) moveStock(it.article_id, it.qty, 'anulacion', sale.id, user.id);
     if (sale.account_amount > 0 && sale.customer_id) {
@@ -550,6 +562,102 @@ export function createApp(db, opts = {}) {
     return { ok: true };
   }));
 
+  // Cambios y devoluciones
+  const returnDetail = (r) => ({
+    ...r,
+    kind: r.new_sale_id ? 'cambio' : 'devolucion',
+    items: db.prepare('SELECT name, qty, price FROM return_items WHERE return_id=?').all(r.id),
+    new_items: r.new_sale_id ? db.prepare('SELECT name, qty, price FROM sale_items WHERE sale_id=?').all(r.new_sale_id) : [],
+    new_sale: r.new_sale_id ? (() => {
+      const n = db.prepare('SELECT * FROM sales WHERE id=?').get(r.new_sale_id);
+      return { ...n, payments: db.prepare('SELECT method,amount FROM sale_payments WHERE sale_id=?').all(n.id) };
+    })() : null,
+  });
+  route('GET', '/api/returns', ['ventas.cobrar', 'caja.ver'], ({ query }) => {
+    const date = query.get('date') || new Date().toLocaleDateString('sv-SE');
+    return db.prepare(`SELECT r.*, u.name AS user_name, s.customer_name, s.customer_doc, s.created_at AS sale_at FROM returns r
+      JOIN sales s ON s.id = r.sale_id LEFT JOIN users u ON u.id = r.user_id WHERE date(r.created_at) = ? ORDER BY r.id DESC`).all(date).map(returnDetail);
+  });
+  route('POST', '/api/returns', 'ventas.devolver', ({ body, user, can }) => tx(db, () => {
+    const session = requireSession();
+    const sale = db.prepare('SELECT * FROM sales WHERE id=?').get(body.sale_id);
+    if (!sale) throw new HttpError(404, 'Venta no encontrada');
+    if (sale.voided) throw new HttpError(409, 'La venta está anulada');
+    const asked = Array.isArray(body.items) ? body.items : [];
+    if (!asked.length) throw bad('Elegí qué prendas se devuelven');
+
+    // Cuánto se puede devolver de cada línea y a qué precio (el descuento de la venta se reparte en todas las prendas).
+    // Si parte de la venta se pagó con mercadería devuelta (un cambio), eso no se vuelve a devolver en plata: solo lo realmente pagado.
+    const paidTotal = round2(sale.total - sale.exchange_amount);
+    const ratio = sale.subtotal ? paidTotal / sale.subtotal : 1;
+    const lines = []; const seen = new Set();
+    let value = 0;
+    for (const it of asked) {
+      const qty = num(it.qty, 'Cantidad', { min: 1, int: true });
+      const si = db.prepare('SELECT * FROM sale_items WHERE id=? AND sale_id=?').get(it.sale_item_id, sale.id);
+      if (!si) throw bad('Una de las prendas no pertenece a esa venta');
+      if (seen.has(si.id)) throw bad('Una prenda está repetida');
+      seen.add(si.id);
+      const returned = db.prepare('SELECT COALESCE(SUM(qty),0) AS q FROM return_items WHERE sale_item_id=?').get(si.id).q;
+      if (qty > si.qty - returned) throw new HttpError(409, `De "${si.name}" solo se pueden devolver ${si.qty - returned} (ya se devolvieron ${returned})`);
+      const unit = si.price * ratio;
+      lines.push({ si, qty, unit });
+      value += round2(qty * unit);
+    }
+    const already = db.prepare('SELECT COALESCE(SUM(value),0) AS v FROM returns WHERE sale_id=?').get(sale.id).v;
+    value = Math.min(round2(value), round2(paidTotal - already)); // nunca más de lo que se pagó en la venta
+    if (value <= 0) throw bad('No hay nada para devolver');
+
+    // Cliente (para saldo a favor o cuenta corriente): el de la venta o el que se indique.
+    const customerId = sale.customer_id || body.customer_id || null;
+    const customer = customerId ? db.prepare('SELECT * FROM customers WHERE id=? AND active=1').get(customerId) : null;
+    if (customerId && !customer) throw new HttpError(404, 'Cliente no encontrado');
+
+    // 1) la mercadería vuelve al stock
+    for (const l of lines) moveStock(l.si.article_id, l.qty, 'devolucion', sale.id, user.id);
+
+    // 2) cambio: la prenda nueva se carga como una venta cubierta, en parte o del todo, por lo devuelto
+    const wanted = Array.isArray(body.new_items) ? body.new_items : [];
+    let exchange = 0, newSale = null;
+    if (wanted.length) {
+      const n = wanted.reduce((sum, it) => {
+        const a = db.prepare('SELECT price FROM articles WHERE id=? AND active=1').get(it.article_id);
+        if (!a) throw new HttpError(404, `Artículo ${it.article_id} no encontrado`);
+        return sum + a.price * num(it.qty, 'Cantidad', { min: 1, int: true });
+      }, 0);
+      exchange = Math.min(value, round2(n));
+      newSale = createSale({ items: wanted, payments: body.payments, account_amount: body.account_amount, customer_id: customer?.id }, user, can, exchange).data;
+    }
+
+    // 3) lo que sobra de lo devuelto: plata al cliente o saldo a favor
+    const leftover = round2(value - exchange);
+    let refundCash = 0, refundMethod = null, credit = 0;
+    if (leftover > 0) {
+      if (body.leftover === 'credit') {
+        if (!customer) throw bad('Para dejar saldo a favor elegí un cliente');
+        credit = leftover;
+        db.prepare('INSERT INTO account_movements (customer_id,amount,concept,sale_id,user_id) VALUES (?,?,?,?,?)')
+          .run(customer.id, credit, `Saldo a favor por devolución (venta #${sale.id})`, sale.id, user.id);
+      } else if (METHODS.includes(body.leftover)) {
+        refundCash = leftover; refundMethod = body.leftover;
+        db.prepare('INSERT INTO cash_movements (session_id,type,method,amount,concept,sale_id,user_id) VALUES (?,?,?,?,?,?,?)')
+          .run(session.id, 'egreso', refundMethod, refundCash, `Devolución venta #${sale.id}`, sale.id, user.id);
+      } else throw bad('Indicá cómo se le devuelve el dinero al cliente');
+    }
+
+    const { lastInsertRowid: id } = db.prepare(`INSERT INTO returns
+      (sale_id,session_id,customer_id,new_sale_id,value,exchange_amount,refund_cash,refund_method,credit_amount,note,user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(sale.id, session.id, customer?.id ?? null, newSale?.id ?? null, value, exchange, refundCash, refundMethod, credit, String(body.note ?? '').trim().slice(0, 200), user.id);
+    for (const l of lines) {
+      const full = db.prepare('SELECT cost, brand FROM sale_items WHERE id=?').get(l.si.id);
+      db.prepare('INSERT INTO return_items (return_id,sale_item_id,article_id,name,qty,price,list_price,cost,brand) VALUES (?,?,?,?,?,?,?,?,?)')
+        .run(id, l.si.id, l.si.article_id, l.si.name, l.qty, round2(l.unit), l.si.price, full.cost, full.brand);
+    }
+    const r = db.prepare(`SELECT r.*, u.name AS user_name, s.customer_name, s.customer_doc, s.created_at AS sale_at FROM returns r
+      JOIN sales s ON s.id = r.sale_id LEFT JOIN users u ON u.id = r.user_id WHERE r.id=?`).get(id);
+    return { status: 201, data: returnDetail(r) };
+  }));
+
   // Estadísticas
   const GROUPS = {
     day:   { fmt: '%Y-%m-%d', limit: 31 },
@@ -557,6 +665,14 @@ export function createApp(db, opts = {}) {
     month: { fmt: '%Y-%m',    limit: 12 },
     year:  { fmt: '%Y',       limit: 10 },
   };
+
+  // Las devoluciones restan en el período en que se hicieron (ventas, unidades y ganancia netas).
+  const returnRows = (where, ...args) => db.prepare(`
+    SELECT r.id, r.value, s.user_id AS seller_id, r.refund_cash, r.refund_method,
+           COALESCE((SELECT SUM(qty) FROM return_items WHERE return_id=r.id),0) AS units,
+           COALESCE((SELECT SUM(qty*cost) FROM return_items WHERE return_id=r.id),0) AS cost,
+           strftime('%Y-%m-%d', r.created_at) AS day
+    FROM returns r JOIN sales s ON s.id = r.sale_id WHERE ${where}`).all(...args);
 
   route('GET', '/api/stats/series', 'estadisticas.ver', ({ query, can }) => {
     const g = GROUPS[query.get('group') || 'day'];
@@ -566,8 +682,20 @@ export function createApp(db, opts = {}) {
              COUNT(*) AS sales, ROUND(SUM(s.total),2) AS total,
              COALESCE(SUM((SELECT SUM(qty) FROM sale_items WHERE sale_id = s.id)),0) AS units,
              ROUND(SUM(s.total - COALESCE((SELECT SUM(qty*cost) FROM sale_items WHERE sale_id = s.id),0)),2) AS profit
-      FROM sales s WHERE s.voided = 0 GROUP BY period ORDER BY period DESC LIMIT ?`).all(g.limit);
-    return rows.reverse().map((r) => ({ ...r, profit: can('costos.ver') ? r.profit : null, avg_ticket: r.sales ? round2(r.total / r.sales) : 0 }));
+      FROM sales s WHERE s.voided = 0 GROUP BY period ORDER BY period DESC LIMIT ?`).all(g.limit).map((r) => ({ ...r }));
+    const byPeriod = new Map(rows.map((r) => [r.period, r]));
+    const rets = db.prepare(`
+      SELECT strftime('${g.fmt}', r.created_at) AS period, ROUND(SUM(r.value),2) AS value,
+             COALESCE(SUM((SELECT SUM(qty) FROM return_items WHERE return_id=r.id)),0) AS units,
+             COALESCE(SUM((SELECT SUM(qty*cost) FROM return_items WHERE return_id=r.id)),0) AS cost
+      FROM returns r GROUP BY period ORDER BY period DESC LIMIT ?`).all(g.limit);
+    for (const r of rets) {
+      const row = byPeriod.get(r.period) || { period: r.period, sales: 0, total: 0, units: 0, profit: 0 };
+      if (!byPeriod.has(r.period)) { rows.push(row); byPeriod.set(r.period, row); }
+      row.total = round2(row.total - r.value); row.units -= r.units; row.profit = round2(row.profit - (r.value - r.cost));
+    }
+    rows.sort((a, b) => (a.period < b.period ? 1 : -1));
+    return rows.slice(0, g.limit).reverse().map((r) => ({ ...r, profit: can('costos.ver') ? r.profit : null, avg_ticket: r.sales ? round2(r.total / r.sales) : 0 }));
   });
 
   route('GET', '/api/stats/breakdown', 'estadisticas.ver', ({ query, can }) => {
@@ -576,24 +704,47 @@ export function createApp(db, opts = {}) {
     // Período actual según la agrupación elegida.
     const cur = db.prepare(`SELECT strftime('${g.fmt}','now','localtime') AS p`).get().p;
     const inPeriod = `strftime('${g.fmt}', s.created_at) = ? AND s.voided = 0`;
+    const retIn = `strftime('${g.fmt}', r.created_at) = ?`;
+    const rets = returnRows(retIn, cur);
+    const retItems = db.prepare(`SELECT i.article_id, i.name, i.brand, i.qty, i.list_price, i.cost FROM return_items i JOIN returns r ON r.id = i.return_id WHERE ${retIn}`).all(cur);
     const totals = db.prepare(`SELECT COUNT(*) AS sales, COALESCE(ROUND(SUM(total),2),0) AS total FROM sales s WHERE ${inPeriod}`).get(cur);
+    totals.total = round2(totals.total - rets.reduce((a, r) => a + r.value, 0));
     const byMethod = db.prepare(`
       SELECT p.method, ROUND(SUM(p.amount),2) AS total FROM sale_payments p JOIN sales s ON s.id = p.sale_id
-      WHERE ${inPeriod} GROUP BY p.method`).all(cur);
+      WHERE ${inPeriod} GROUP BY p.method`).all(cur).map((m) => ({ ...m }));
+    for (const r of rets) if (r.refund_method && r.refund_cash) { // la plata devuelta resta del medio con que se devolvió
+      const m = byMethod.find((x) => x.method === r.refund_method) || (byMethod.push({ method: r.refund_method, total: 0 }), byMethod.at(-1));
+      m.total = round2(m.total - r.refund_cash);
+    }
     const topArticles = db.prepare(`
-      SELECT i.name, SUM(i.qty) AS units, ROUND(SUM(i.qty*i.price),2) AS total
+      SELECT i.article_id, i.name, SUM(i.qty) AS units, ROUND(SUM(i.qty*i.price),2) AS total
       FROM sale_items i JOIN sales s ON s.id = i.sale_id WHERE ${inPeriod}
-      GROUP BY i.article_id ORDER BY units DESC LIMIT 10`).all(cur);
+      GROUP BY i.article_id ORDER BY units DESC`).all(cur).map((a) => {
+      const back = retItems.filter((x) => x.article_id === a.article_id);
+      return { name: a.name, units: a.units - back.reduce((q, x) => q + x.qty, 0), total: round2(a.total - back.reduce((q, x) => q + x.qty * x.list_price, 0)) };
+    }).filter((a) => a.units > 0).sort((x, y) => y.units - x.units).slice(0, 10);
     const bySeller = db.prepare(`
       SELECT COALESCE(u.name, 'Sin usuario') AS seller, COUNT(*) AS sales, ROUND(SUM(s.total),2) AS total
-      FROM sales s LEFT JOIN users u ON u.id = s.user_id WHERE ${inPeriod} GROUP BY s.user_id ORDER BY total DESC`).all(cur);
+      FROM sales s LEFT JOIN users u ON u.id = s.user_id WHERE ${inPeriod} GROUP BY s.user_id`).all(cur).map((x) => ({ ...x }));
+    for (const r of rets) { // lo devuelto resta al vendedor de la venta original
+      const who = db.prepare('SELECT name FROM users WHERE id=?').get(r.seller_id)?.name ?? 'Sin usuario';
+      const row = bySeller.find((x) => x.seller === who);
+      if (row) row.total = round2(row.total - r.value);
+    }
+    bySeller.sort((x, y) => y.total - x.total);
     // A precio de lista (antes de descuentos), igual que «más vendidos». La ganancia solo con permiso de costos.
     const byBrand = db.prepare(`
       SELECT COALESCE(i.brand, 'Sin marca') AS brand, SUM(i.qty) AS units, ROUND(SUM(i.qty*i.price),2) AS total,
              ROUND(SUM(i.qty*(i.price-i.cost)),2) AS profit
       FROM sale_items i JOIN sales s ON s.id = i.sale_id WHERE ${inPeriod}
-      GROUP BY COALESCE(i.brand, 'Sin marca') ORDER BY total DESC`).all(cur)
-      .map((r) => ({ ...r, profit: can('costos.ver') ? r.profit : null }));
+      GROUP BY COALESCE(i.brand, 'Sin marca')`).all(cur).map((r) => {
+      const back = retItems.filter((x) => (x.brand || 'Sin marca') === r.brand);
+      return {
+        brand: r.brand, units: r.units - back.reduce((q, x) => q + x.qty, 0),
+        total: round2(r.total - back.reduce((q, x) => q + x.qty * x.list_price, 0)),
+        profit: can('costos.ver') ? round2(r.profit - back.reduce((q, x) => q + x.qty * (x.list_price - x.cost), 0)) : null,
+      };
+    }).sort((x, y) => y.total - x.total);
     return { period: cur, ...totals, byMethod, topArticles, bySeller, byBrand };
   });
 

@@ -134,6 +134,10 @@
   </div>
   <h2>Ventas del día <input id="salesDate" type="date" style="width:auto;margin-left:10px;font-size:14px"></h2>
   <table id="salesTable"><thead><tr><th>N°</th><th>Hora</th><th>Vendedor</th><th>Detalle</th><th>Pago</th><th>Total</th><th></th></tr></thead><tbody></tbody></table>
+  <div id="returnsBox" hidden>
+    <h2>Cambios y devoluciones del día</h2>
+    <table id="retTable"><thead><tr><th>N°</th><th>Hora</th><th>Tipo</th><th>Detalle</th><th>Valor devuelto</th><th>Resolución</th><th></th></tr></thead><tbody></tbody></table>
+  </div>
   <div id="sessionsBox"><h2>Historial de cajas</h2>
   <table id="sessionsTable"><thead><tr><th>#</th><th>Apertura</th><th>Cierre</th><th>Responsable</th><th>Inicial</th><th>Ventas</th><th>Esperado</th><th>Contado</th><th>Diferencia</th></tr></thead><tbody></tbody></table></div>
 </section>
@@ -514,6 +518,40 @@
   </div>
 
   <div class="row end psec"><button type="button" id="profileLock" class="ghost">Bloquear ahora</button><button type="button" id="profileClose" class="primary">Cerrar</button></div>
+</dialog>
+<dialog id="retDialog" class="wide">
+  <form id="retForm" method="dialog">
+    <h2 id="retTitle">Cambio o devolución</h2>
+    <p class="muted" id="retInfo"></p>
+    <h3>1. ¿Qué devuelve?</h3>
+    <table id="retItems"><thead><tr><th>Prenda</th><th>Compró</th><th>Ya devuelto</th><th>Devuelve</th><th>Valor</th></tr></thead><tbody></tbody></table>
+    <h3>2. ¿Se lleva algo a cambio? <small class="muted">(opcional)</small></h3>
+    <input id="retScan" autocomplete="off" placeholder="Escaneá o buscá la prenda nueva">
+    <div id="retResults" class="list"></div>
+    <table id="retNew"><thead><tr><th>Prenda nueva</th><th>Cant.</th><th>Precio</th><th></th></tr></thead><tbody></tbody></table>
+    <div class="card" id="retSummary" style="margin:12px 0"></div>
+    <div id="retPayBox" hidden>
+      <h3>El cliente paga la diferencia</h3>
+      <div class="pay">
+        <label>Efectivo <input data-rp="efectivo" type="number" min="0" step="0.01"></label>
+        <label>Tarjeta <input data-rp="tarjeta" type="number" min="0" step="0.01"></label>
+        <label>Transferencia <input data-rp="transferencia" type="number" min="0" step="0.01"></label>
+        <label id="retAccWrap" hidden>Cuenta del cliente <input id="retAcc" type="number" min="0" step="0.01"></label>
+      </div>
+    </div>
+    <div id="retLeftBox" hidden>
+      <label id="retLeftLabel">Se le devuelve
+        <select id="retLeft"><option value="efectivo">En efectivo</option><option value="tarjeta">A la tarjeta</option><option value="transferencia">Por transferencia</option><option value="credit">Como saldo a favor (para otra compra)</option></select>
+      </label>
+      <div id="retCustBox" hidden>
+        <label>Cliente para el saldo a favor <input id="retCust" autocomplete="off" placeholder="Buscar por nombre, DNI o teléfono"></label>
+        <div id="retCustResults" class="list"></div>
+      </div>
+    </div>
+    <label>Nota (opcional) <input id="retNote" maxlength="200" placeholder="Motivo del cambio, etc."></label>
+    <div id="retError" class="neg"></div>
+    <div class="row end"><button type="button" id="retCancel" class="ghost">Cancelar</button><button class="primary" id="retOk">Confirmar</button></div>
+  </form>
 </dialog>
 <dialog id="payDialog">
   <form id="payForm" method="dialog">
