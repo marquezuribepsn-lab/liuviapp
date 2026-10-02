@@ -8,7 +8,8 @@ import { createGoogleDrive } from './gdrive.js';
 import { REPORTS, buildReport, reportSheet, isDay } from './reports.js';
 import { buildXlsx } from './xlsx.js';
 import { createImporter, ImportError, SheetFormatError } from './importer.js';
-import { appVersion, getSetting, setSetting } from './db.js';
+import { appVersion, getSetting, setSetting, APP_DIR } from './db.js';
+import { createUpdater } from './updater.js';
 import {
   PERMISSIONS, ALL_PERMISSIONS, MIN_PASSWORD, SESSION_HOURS,
   hashPassword, verifyPassword, newToken, hashToken, parseCookies, createLimiter, PIN_RE, isWeakPin, isLoopback,
@@ -53,6 +54,11 @@ export function createApp(db, opts = {}) {
   const gdrive = createGoogleDrive(db, { keep: () => backups.keepCount(), ...opts.google }); // en Drive se conservan tantas copias como en la carpeta
   const dbFile = db.prepare('PRAGMA database_list').get()?.file;
   const backups = createBackups(db, { gdrive, defaultDir: dbFile ? join(dirname(dbFile), 'copias') : null });
+  const updater = createUpdater(db, {
+    appDir: APP_DIR, version: appVersion(), enabled: process.env.LIUVI_UPDATE === '1', restart: opts.restart,
+    beforeApply: () => { if (backups.dirOf()) backups.run('antes de actualizar'); }, // si la copia falla, no se actualiza
+    ...opts.update,
+  });
   const openSession = () => db.prepare('SELECT * FROM cash_sessions WHERE closed_at IS NULL').get();
   const requireSession = () => {
     const s = openSession();
@@ -1042,6 +1048,19 @@ export function createApp(db, opts = {}) {
     return { status: 201, data: { id, total, owed: supplierOwed(s.id) } };
   }));
 
+  // Actualización del programa (solo administradores y solo en el programa instalado).
+  route('GET', '/api/update', 'usuarios.admin', () => updater.status());
+  route('PUT', '/api/update', 'usuarios.admin', ({ body }) => { updater.configure({ auto: body.auto }); return updater.status(); });
+  route('POST', '/api/update/check', 'usuarios.admin', async () => {
+    try { return await updater.check(); } catch (e) { throw new HttpError(502, e.message); }
+  });
+  route('POST', '/api/update/apply', 'usuarios.admin', async () => {
+    let r;
+    try { r = await updater.apply(); } catch (e) { throw new HttpError(500, e.message); }
+    setTimeout(() => updater.relaunch(), 800); // primero se le contesta al navegador, después se reinicia
+    return { ...r, restarting: !!opts.restart };
+  });
+
   // Cambio masivo de precios (por marca, categoría, etc.) con vista previa y posibilidad de deshacer la última tanda.
   const ROUNDINGS = [0, 1, 10, 50, 100, 500, 1000];
   const SIGN = { percent: '%', amount: '$' };
@@ -1168,6 +1187,7 @@ export function createApp(db, opts = {}) {
         pending: round2(open.reduce((a, l) => a + Math.max(0, l.remaining), 0)),
       };
     }
+    if (can('usuarios.admin')) { const up = updater.status(); if (up.available) out.update = { latest: up.latest, version: up.version }; }
     if (can('proveedores.ver')) {
       const owing = db.prepare(`${SUPPLIER_LIST} WHERE s.active = 1`).all().filter((x) => x.owed > 0.004);
       out.suppliers = { count: owing.length, total: round2(owing.reduce((a, x) => a + x.owed, 0)) };
@@ -1592,5 +1612,6 @@ export function createApp(db, opts = {}) {
     }
   }
   handle.backups = backups;
+  handle.updater = updater;
   return handle;
 }
