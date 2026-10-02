@@ -59,6 +59,7 @@
     <button data-tab="articulos" data-in="inventario">Artículos</button>
     <button data-tab="stock" data-in="inventario">Stock</button>
     <button data-tab="proveedores" data-in="inventario">Proveedores</button>
+    <button type="button" id="offNew" class="subAction" data-in="inventario" data-need="articulos.editar" hidden>+ CREAR OFERTAS</button>
     <button data-tab="stats" data-in="reportes">Estadísticas</button>
     <button data-tab="reportes" data-in="reportes">Reportes</button>
   </nav>
@@ -243,11 +244,21 @@
   <dialog id="priceDialog" class="wide">
     <h2>Cambiar precios en bloque</h2>
     <p class="muted" style="margin-top:0">Elegí a qué artículos se aplica y cuánto cambia. Antes de guardar vas a ver cómo queda, y después podés deshacer la última tanda.</p>
-    <div class="grid2">
+    <div class="seg" id="prWho" style="margin-bottom:8px"><button type="button" class="active" data-w="group">Por grupo (marca, categoría, nombre)</button><button type="button" data-w="items">Artículos puntuales</button></div>
+    <div id="prGroup" class="grid2">
       <label>Marca <select id="prBrand"></select></label>
       <label>Categoría <input id="prCategory" list="cats" placeholder="(todas)" autocomplete="off"></label>
       <label>Nombre contiene <input id="prQuery" placeholder="(todos)" autocomplete="off"></label>
       <label class="inline" style="align-self:end"><input type="checkbox" id="prStock"> Solo los que tienen stock</label>
+    </div>
+    <div id="prItems" hidden>
+      <label>Buscar artículo (nombre, código, marca, color…) <input id="prSearch" autocomplete="off" placeholder="Escribí o escaneá para buscar"></label>
+      <div class="split" style="margin-top:6px">
+        <div class="scrollBox" style="max-height:170px"><table id="prResults"><thead><tr><th>Resultados (tocá para agregar)</th><th class="num">Precio</th></tr></thead><tbody></tbody></table></div>
+        <div class="scrollBox" style="max-height:170px"><table id="prPicked"><thead><tr><th>Artículos elegidos <span class="muted" id="prPickedCount"></span></th><th></th></tr></thead><tbody></tbody></table></div>
+      </div>
+    </div>
+    <div class="grid2">
       <label>Qué cambiar <select id="prTarget"><option value="price">Precio de venta</option><option value="cost" class="col-cost">Costo</option><option value="both" class="col-cost">Precio de venta y costo</option></select></label>
       <label>Tipo de cambio <select id="prMode"><option value="percent">Porcentaje (%)</option><option value="amount">Monto fijo ($)</option></select></label>
       <label>Cantidad <input id="prValue" type="number" step="0.01" placeholder="Ej: 15 para subir 15%, -10 para bajar 10%"></label>
@@ -325,10 +336,6 @@
 <!-- STOCK -->
 <section id="stock" class="tab" hidden>
   <div id="stockSummary" class="kpis"></div>
-  <div class="card" id="offersCard">
-    <div class="row"><h2 style="margin:0;flex:1">Ofertas</h2><button id="offView" class="ghost">VER OFERTAS</button><button id="offNew" class="primary">Crear OFERTAS</button></div>
-    <p class="muted" id="offInfo" style="margin:6px 0 0"></p>
-  </div>
   <div class="split">
     <div class="card" id="adjCard">
       <h2>Ingreso / ajuste de stock</h2>
@@ -349,9 +356,11 @@
       <div class="row">
         <select id="sbBrand" style="width:auto"><option value="">Todas las marcas</option></select>
         <label class="inline"><input type="checkbox" id="sbLow"> Solo stock bajo o agotado</label>
+        <label class="inline"><input type="checkbox" id="sbOffers"> Solo ofertas</label>
+        <button type="button" id="offManage" class="link" title="Ver, editar, desactivar o borrar las ofertas">Administrar ofertas</button>
       </div>
       <div class="scrollBox" style="max-height:260px">
-        <table id="sbTable"><thead><tr><th>Marca</th><th>Artículo</th><th>Talle</th><th>Color</th><th class="num">Stock</th></tr></thead><tbody></tbody></table>
+        <table id="sbTable"><thead><tr><th>Marca</th><th>Artículo</th><th>Talle</th><th>Color</th><th class="num">Stock</th><th>Oferta</th></tr></thead><tbody></tbody></table>
       </div>
       <p class="muted" id="sbNote" style="margin:6px 0 0"></p>
     </div>
@@ -371,42 +380,6 @@
     <button type="button" id="stockClear" class="danger">Limpiar stock completo…</button>
   </div>
 
-  <dialog id="offDialog" class="wide">
-    <form id="offForm" method="dialog">
-      <h2 id="offTitle">Crear oferta</h2>
-      <div class="grid2">
-        <label>Nombre de la oferta <input name="name" required maxlength="80" placeholder="Ej: 2x1 en remeras de verano"></label>
-        <label>Tipo <select name="kind" id="offKind">
-          <option value="percent">Descuento en porcentaje (%)</option>
-          <option value="price">Precio fijo por unidad ($)</option>
-          <option value="nxm">Llevá N, pagá M (2x1, 3x2…)</option>
-          <option value="second">Segunda unidad con descuento</option></select></label>
-        <label data-for="percent second">Porcentaje de descuento <input name="pct" type="number" min="1" max="100" step="0.01" placeholder="Ej: 20"></label>
-        <label data-for="price">Precio de oferta <input name="price" type="number" min="0" step="0.01" placeholder="Ej: 9990"></label>
-        <label data-for="nxm">Llevás (N) <input name="buy" type="number" min="2" max="12" step="1" placeholder="Ej: 2"></label>
-        <label data-for="nxm">Pagás (M) <input name="pay" type="number" min="1" max="11" step="1" placeholder="Ej: 1"></label>
-        <label>Desde (opcional) <input name="starts_on" type="date"></label>
-        <label>Hasta (opcional) <input name="ends_on" type="date"></label>
-      </div>
-      <p class="muted" id="offHelp" style="margin:4px 0 8px"></p>
-      <h3 style="margin:8px 0 4px">Artículos de la oferta <span class="muted" id="offCount"></span></h3>
-      <div class="row">
-        <input id="offSearch" placeholder="Buscar por nombre, código, marca, color…" style="flex:1" autocomplete="off">
-        <select id="offBrand" style="width:auto"><option value="">Todas las marcas</option></select>
-        <button type="button" id="offAddAll" class="ghost" title="Agrega todos los artículos que se ven en la lista de resultados">Agregar todos los resultados</button>
-      </div>
-      <div class="split" style="margin-top:8px">
-        <div class="scrollBox" style="max-height:200px"><table id="offResults"><thead><tr><th>Resultados (tocá para agregar)</th><th class="num">Precio</th></tr></thead><tbody></tbody></table></div>
-        <div class="scrollBox" style="max-height:200px"><table id="offPicked"><thead><tr><th>En la oferta</th><th></th></tr></thead><tbody></tbody></table></div>
-      </div>
-      <div id="offError" class="neg"></div>
-      <div class="row end"><button type="button" id="offCancel" class="ghost">Cancelar</button><button class="primary" id="offSave">Guardar oferta</button></div>
-    </form>
-  </dialog>
-  <dialog id="offListDialog" class="wide">
-    <div class="row"><h2 style="margin:0;flex:1">Ofertas</h2><button type="button" id="offListClose" class="ghost">Cerrar</button></div>
-    <div class="scrollBox" style="max-height:60vh"><table id="offTable"><thead><tr><th>Oferta</th><th>Qué hace</th><th>Artículos</th><th>Vigencia</th><th>Estado</th><th></th></tr></thead><tbody></tbody></table></div>
-  </dialog>
   <dialog id="clearDialog" class="wide">
     <div id="clrStep1">
       <h2>Limpiar stock completo</h2>
@@ -740,6 +713,42 @@
   </div>
 
   <div class="row end psec"><button type="button" id="profileLock" class="ghost">Bloquear ahora</button><button type="button" id="profileClose" class="primary">Cerrar</button></div>
+</dialog>
+<dialog id="offDialog" class="wide">
+  <form id="offForm" method="dialog">
+    <h2 id="offTitle">Crear oferta</h2>
+    <div class="grid2">
+      <label>Nombre de la oferta <input name="name" required maxlength="80" placeholder="Ej: 2x1 en remeras de verano"></label>
+      <label>Tipo <select name="kind" id="offKind">
+        <option value="percent">Descuento en porcentaje (%)</option>
+        <option value="price">Precio fijo por unidad ($)</option>
+        <option value="nxm">Llevá N, pagá M (2x1, 3x2…)</option>
+        <option value="second">Segunda unidad con descuento</option></select></label>
+      <label data-for="percent second">Porcentaje de descuento <input name="pct" type="number" min="1" max="100" step="0.01" placeholder="Ej: 20"></label>
+      <label data-for="price">Precio de oferta <input name="price" type="number" min="0" step="0.01" placeholder="Ej: 9990"></label>
+      <label data-for="nxm">Llevás (N) <input name="buy" type="number" min="2" max="12" step="1" placeholder="Ej: 2"></label>
+      <label data-for="nxm">Pagás (M) <input name="pay" type="number" min="1" max="11" step="1" placeholder="Ej: 1"></label>
+      <label>Desde (opcional) <input name="starts_on" type="date"></label>
+      <label>Hasta (opcional) <input name="ends_on" type="date"></label>
+    </div>
+    <p class="muted" id="offHelp" style="margin:4px 0 8px"></p>
+    <h3 style="margin:8px 0 4px">Artículos de la oferta <span class="muted" id="offCount"></span></h3>
+    <div class="row">
+      <input id="offSearch" placeholder="Buscar por nombre, código, marca, color…" style="flex:1" autocomplete="off">
+      <select id="offBrand" style="width:auto"><option value="">Todas las marcas</option></select>
+      <button type="button" id="offAddAll" class="ghost" title="Agrega todos los artículos que se ven en la lista de resultados">Agregar todos los resultados</button>
+    </div>
+    <div class="split" style="margin-top:8px">
+      <div class="scrollBox" style="max-height:200px"><table id="offResults"><thead><tr><th>Resultados (tocá para agregar)</th><th class="num">Precio</th></tr></thead><tbody></tbody></table></div>
+      <div class="scrollBox" style="max-height:200px"><table id="offPicked"><thead><tr><th>En la oferta</th><th></th></tr></thead><tbody></tbody></table></div>
+    </div>
+    <div id="offError" class="neg"></div>
+    <div class="row end"><button type="button" id="offCancel" class="ghost">Cancelar</button><button class="primary" id="offSave">Guardar oferta</button></div>
+  </form>
+</dialog>
+<dialog id="offListDialog" class="wide">
+  <div class="row"><h2 style="margin:0;flex:1">Ofertas</h2><button type="button" id="offListClose" class="ghost">Cerrar</button></div>
+  <div class="scrollBox" style="max-height:60vh"><table id="offTable"><thead><tr><th>Oferta</th><th>Qué hace</th><th>Artículos</th><th>Vigencia</th><th>Estado</th><th></th></tr></thead><tbody></tbody></table></div>
 </dialog>
 <dialog id="retDialog" class="wide">
   <form id="retForm" method="dialog">

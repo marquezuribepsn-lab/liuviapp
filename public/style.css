@@ -269,3 +269,7 @@ body.locked>footer{display:none}
 #subTabs[hidden]{display:none}
 #subTabs button{padding:5px 14px;font-size:14px;border-radius:99px}
 #subTabs button.active{background:#ffffff;color:var(--brand-ink)}
+
+#subTabs button.subAction{margin-left:6px;border:1px solid #ffffffcc;font-weight:700;letter-spacing:.3px}
+#subTabs button.subAction:hover{background:#ffffff40}
+#offManage{margin-left:auto}

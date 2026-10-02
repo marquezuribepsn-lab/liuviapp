@@ -32,6 +32,15 @@ test('cambio masivo de precios: filtros, redondeo, costos, historial y deshacer'
     assert.equal((await price(j.id)).price, 28000);
     assert.equal((await price(j.id)).cost, 10000);
 
+    // Artículos puntuales: solo los elegidos, sin importar marca ni filtros
+    const puntual = await t.admin('POST', '/api/prices/apply', { article_ids: [r2.id], mode: 'percent', value: 10, round: 0 });
+    assert.equal(puntual.data.changed, 1);
+    assert.equal((await price(r2.id)).price, 8470, '7700 + 10 %');
+    assert.equal((await price(r1.id)).price, 11000, 'los demás de la marca no cambian');
+    assert.equal((await t.admin('POST', '/api/prices/preview', { article_ids: [], mode: 'percent', value: 10 })).status, 400, 'sin artículos elegidos no hay nada que cambiar');
+    assert.equal((await t.admin('POST', '/api/prices/undo', {})).status, 200);
+    assert.equal((await price(r2.id)).price, 7700, 'se deshace también el cambio puntual');
+
     // Validaciones
     assert.equal((await t.admin('POST', '/api/prices/preview', { mode: 'percent', value: 0 })).status, 400);
     assert.equal((await t.admin('POST', '/api/prices/preview', { mode: 'percent', value: -95 })).status, 400);
@@ -39,7 +48,7 @@ test('cambio masivo de precios: filtros, redondeo, costos, historial y deshacer'
     assert.equal((await t.admin('POST', '/api/prices/apply', { brand_id: 999, mode: 'percent', value: 5 })).status, 400, 'si no cambia nada, no registra una tanda vacía');
 
     // Historial y deshacer (de la última tanda hacia atrás)
-    assert.equal((await t.admin('GET', '/api/prices/history')).data.length, 2);
+    assert.equal((await t.admin('GET', '/api/prices/history')).data.length, 3);
     assert.equal((await t.admin('POST', '/api/prices/undo', {})).data.restored, 1);
     assert.equal((await price(j.id)).price, 30000);
     assert.equal((await price(j.id)).cost, 12000);
