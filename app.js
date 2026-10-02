@@ -957,9 +957,9 @@ export function createApp(db, opts = {}) {
   // Proveedores y compras: cada compra suma stock; lo que no se paga en el momento queda como deuda con el proveedor.
   const SUPPLIER_LIST = `
     SELECT s.*, COALESCE((SELECT SUM(amount) FROM supplier_movements WHERE supplier_id=s.id),0) AS owed,
-      (SELECT COUNT(*) FROM purchases WHERE supplier_id=s.id) AS purchases_count,
-      COALESCE((SELECT SUM(total) FROM purchases WHERE supplier_id=s.id),0) AS purchases_total,
-      (SELECT MAX(bought_at) FROM purchases WHERE supplier_id=s.id) AS last_purchase
+      (SELECT COUNT(*) FROM purchases WHERE supplier_id=s.id AND voided=0) AS purchases_count,
+      COALESCE((SELECT SUM(total) FROM purchases WHERE supplier_id=s.id AND voided=0),0) AS purchases_total,
+      (SELECT MAX(bought_at) FROM purchases WHERE supplier_id=s.id AND voided=0) AS last_purchase
     FROM suppliers s`;
   const supplierOwed = (id) => round2(db.prepare('SELECT COALESCE(SUM(amount),0) AS b FROM supplier_movements WHERE supplier_id=?').get(id).b);
   const supplierRow = (r) => ({ ...r, owed: round2(r.owed), purchases_total: round2(r.purchases_total) });
@@ -979,7 +979,8 @@ export function createApp(db, opts = {}) {
     if (!s) throw new HttpError(404, 'Proveedor no encontrado');
     const movements = db.prepare(`SELECT m.*, u.name AS user_name FROM supplier_movements m LEFT JOIN users u ON u.id=m.user_id WHERE m.supplier_id=? ORDER BY m.id DESC LIMIT 100`).all(s.id).map((r) => ({ ...r }));
     const purchases = db.prepare('SELECT * FROM purchases WHERE supplier_id=? ORDER BY id DESC LIMIT 50').all(s.id)
-      .map((p) => ({ ...p, items: db.prepare('SELECT article_id, name, qty, cost FROM purchase_items WHERE purchase_id=?').all(p.id).map((i) => ({ ...i })) }));
+      .map((p) => ({ ...p, paid: round2(-db.prepare('SELECT COALESCE(SUM(amount),0) AS a FROM supplier_movements WHERE purchase_id=? AND amount<0 AND concept LIKE ?').get(p.id, 'Pago de la compra%').a),
+        items: db.prepare('SELECT article_id, name, qty, cost FROM purchase_items WHERE purchase_id=?').all(p.id).map((i) => ({ ...i })) }));
     return { ...supplierRow(s), movements, purchases };
   });
   route('POST', '/api/suppliers', 'proveedores.editar', ({ body }) => {
@@ -1019,6 +1020,87 @@ export function createApp(db, opts = {}) {
     paySupplier(s, { amount, from_cash: !!body.from_cash, method: body.method, concept: String(body.concept || 'Pago a proveedor').trim().slice(0, 100) || 'Pago a proveedor' }, user);
     return { status: 201, data: { owed: supplierOwed(s.id) } };
   }));
+  const purchaseLines = (items) => items.map((it) => {
+    const a = db.prepare('SELECT id, name, size, color, cost FROM articles WHERE id=? AND active=1').get(it.article_id);
+    if (!a) throw new HttpError(404, `Artículo ${it.article_id} no encontrado`);
+    return { a, qty: num(it.qty, 'Cantidad', { min: 1, int: true }), cost: round2(num(it.cost ?? a.cost, 'Costo')) };
+  });
+  const purchaseLabel = (a) => [a.name, a.size && `Talle ${a.size}`, a.color].filter(Boolean).join(' · ');
+  function purchaseDetail(id) {
+    const p = db.prepare('SELECT p.*, s.name AS supplier_name FROM purchases p JOIN suppliers s ON s.id = p.supplier_id WHERE p.id=?').get(id);
+    if (!p) return null;
+    const items = db.prepare(`SELECT i.article_id, i.name, i.qty, i.cost, COALESCE(a.stock,0) AS stock FROM purchase_items i LEFT JOIN articles a ON a.id = i.article_id WHERE i.purchase_id=?`).all(id).map((i) => ({ ...i }));
+    return { ...p, items };
+  }
+  route('GET', '/api/purchases/:id', 'proveedores.ver', ({ params }) => {
+    const p = purchaseDetail(params.id);
+    if (!p) throw new HttpError(404, 'Compra no encontrada');
+    return p;
+  });
+  // Anular: sale la mercadería que entró (si ya se vendió parte, no se puede) y se cancela la deuda. Lo que ya se pagó queda a favor con el proveedor o, si te lo devuelve, entra a la caja.
+  route('POST', '/api/purchases/:id/void', 'proveedores.editar', ({ params, body, user }) => tx(db, () => {
+    const p = db.prepare('SELECT * FROM purchases WHERE id=?').get(params.id);
+    if (!p) throw new HttpError(404, 'Compra no encontrada');
+    if (p.voided) throw new HttpError(409, 'La compra ya está anulada');
+    const s = db.prepare('SELECT * FROM suppliers WHERE id=?').get(p.supplier_id);
+    const items = db.prepare('SELECT article_id, name, qty FROM purchase_items WHERE purchase_id=?').all(p.id);
+    for (const i of items) {
+      const a = db.prepare('SELECT stock FROM articles WHERE id=?').get(i.article_id);
+      if (a.stock < i.qty) throw new HttpError(409, `No se puede anular: de «${i.name}» entraron ${i.qty} y ahora hay ${a.stock} (ya se vendieron o se ajustaron). Corregí la compra en lugar de anularla.`);
+    }
+    const payments = db.prepare("SELECT * FROM supplier_movements WHERE purchase_id=? AND amount<0 AND concept LIKE 'Pago de la compra%'").all(p.id);
+    for (const i of items) moveStock(i.article_id, -i.qty, 'anulacion_compra', null, user.id);
+    db.prepare('INSERT INTO supplier_movements (supplier_id,amount,concept,purchase_id,user_id) VALUES (?,?,?,?,?)').run(s.id, -p.total, `Anulación de la compra #${p.id}`, p.id, user.id);
+    if (body.refund) {
+      for (const pay of payments) {
+        if (pay.from_cash) {
+          const session = requireSession();
+          db.prepare('INSERT INTO cash_movements (session_id,type,method,amount,concept,user_id) VALUES (?,?,?,?,?,?)')
+            .run(session.id, 'ingreso', METHODS.includes(pay.method) ? pay.method : 'efectivo', -pay.amount, `Devolución de pago de compra anulada #${p.id} · ${s.name}`, user.id);
+        }
+        db.prepare('INSERT INTO supplier_movements (supplier_id,amount,concept,method,purchase_id,from_cash,user_id) VALUES (?,?,?,?,?,?,?)')
+          .run(s.id, -pay.amount, `Anulación: devolución del pago de la compra #${p.id}`, pay.method, p.id, pay.from_cash, user.id);
+      }
+    }
+    db.prepare("UPDATE purchases SET voided=1, voided_at=datetime('now','localtime') WHERE id=?").run(p.id);
+    return { id: p.id, owed: supplierOwed(s.id), refunded: !!body.refund };
+  }));
+  // Corregir una compra cargada: cantidades, costos, artículos, factura, fecha o nota. El stock y la deuda se ajustan por la diferencia.
+  route('PUT', '/api/purchases/:id', 'proveedores.editar', ({ params, body, user }) => tx(db, () => {
+    const p = db.prepare('SELECT * FROM purchases WHERE id=?').get(params.id);
+    if (!p) throw new HttpError(404, 'Compra no encontrada');
+    if (p.voided) throw new HttpError(409, 'La compra está anulada y no se puede editar');
+    const items = Array.isArray(body.items) ? body.items : [];
+    if (!items.length) throw bad('La compra no tiene artículos');
+    const day = body.date ? String(body.date) : p.bought_at;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw bad('Fecha inválida');
+    const lines = purchaseLines(items);
+    const oldQty = new Map(db.prepare('SELECT article_id, SUM(qty) AS q FROM purchase_items WHERE purchase_id=? GROUP BY article_id').all(p.id).map((r) => [r.article_id, r.q]));
+    const newQty = new Map();
+    for (const l of lines) newQty.set(l.a.id, (newQty.get(l.a.id) || 0) + l.qty);
+    const deltas = [];
+    for (const id of new Set([...oldQty.keys(), ...newQty.keys()])) {
+      const delta = (newQty.get(id) || 0) - (oldQty.get(id) || 0);
+      if (!delta) continue;
+      const a = db.prepare('SELECT name, size, stock FROM articles WHERE id=?').get(id);
+      if (a.stock + delta < 0) throw new HttpError(409, `No se puede bajar la cantidad de «${a.name}${a.size ? ' ' + a.size : ''}»: ya se vendieron unidades (hay ${a.stock} en stock).`);
+      deltas.push([id, delta]);
+    }
+    for (const [id, delta] of deltas) moveStock(id, delta, 'correccion_compra', null, user.id);
+    db.prepare('DELETE FROM purchase_items WHERE purchase_id=?').run(p.id);
+    for (const l of lines) {
+      db.prepare('INSERT INTO purchase_items (purchase_id,article_id,name,qty,cost) VALUES (?,?,?,?,?)').run(p.id, l.a.id, purchaseLabel(l.a), l.qty, l.cost);
+      if (body.update_cost) db.prepare('UPDATE articles SET cost=? WHERE id=?').run(l.cost, l.a.id);
+    }
+    const total = round2(lines.reduce((sum, l) => sum + l.qty * l.cost, 0));
+    if (Math.abs(total - p.total) > 0.004) {
+      db.prepare('INSERT INTO supplier_movements (supplier_id,amount,concept,purchase_id,user_id) VALUES (?,?,?,?,?)')
+        .run(p.supplier_id, round2(total - p.total), `Corrección de la compra #${p.id}`, p.id, user.id);
+    }
+    db.prepare("UPDATE purchases SET invoice=?, bought_at=?, total=?, note=?, edited_at=datetime('now','localtime') WHERE id=?")
+      .run(String(body.invoice ?? p.invoice).trim().slice(0, 40), day, total, String(body.note ?? p.note).trim().slice(0, 200), p.id);
+    return { ...purchaseDetail(p.id), owed: supplierOwed(p.supplier_id) };
+  }));
   route('POST', '/api/purchases', 'proveedores.editar', ({ body, user }) => tx(db, () => {
     const s = db.prepare('SELECT * FROM suppliers WHERE id=? AND active=1').get(body.supplier_id);
     if (!s) throw new HttpError(404, 'Proveedor no encontrado');
@@ -1026,11 +1108,7 @@ export function createApp(db, opts = {}) {
     if (!items.length) throw bad('La compra no tiene artículos');
     const day = body.date ? String(body.date) : new Date().toLocaleDateString('sv-SE');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw bad('Fecha inválida');
-    const lines = items.map((it) => {
-      const a = db.prepare('SELECT id, name, size, color, cost FROM articles WHERE id=? AND active=1').get(it.article_id);
-      if (!a) throw new HttpError(404, `Artículo ${it.article_id} no encontrado`);
-      return { a, qty: num(it.qty, 'Cantidad', { min: 1, int: true }), cost: round2(num(it.cost ?? a.cost, 'Costo')) };
-    });
+    const lines = purchaseLines(items);
     const total = round2(lines.reduce((sum, l) => sum + l.qty * l.cost, 0));
     const paid = round2(num(body.paid_amount ?? 0, 'Monto pagado'));
     if (paid < 0 || paid > total + 0.004) throw bad('Lo pagado no puede ser mayor al total de la compra');

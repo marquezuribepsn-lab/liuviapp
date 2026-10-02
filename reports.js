@@ -79,12 +79,12 @@ export function buildReport(db, kind, { from, to }, can) {
   } else if (kind === 'compras') {
     rep.columns = [['N°', 'int'], ['Fecha', 'text'], ['Proveedor', 'text'], ['Factura / remito', 'text'], ['Unidades', 'int'], ['Total', 'money']];
     rep.rows = db.prepare(`SELECT p.id, p.bought_at, s.name, p.invoice, COALESCE((SELECT SUM(qty) FROM purchase_items WHERE purchase_id=p.id),0) AS units, p.total
-      FROM purchases p JOIN suppliers s ON s.id = p.supplier_id WHERE p.bought_at BETWEEN ? AND ? ORDER BY p.id`).all(from, to).map((r) => [r.id, r.bought_at, r.name, r.invoice, r.units, r.total]);
+      FROM purchases p JOIN suppliers s ON s.id = p.supplier_id WHERE p.voided = 0 AND p.bought_at BETWEEN ? AND ? ORDER BY p.id`).all(from, to).map((r) => [r.id, r.bought_at, r.name, r.invoice, r.units, r.total]);
     rep.totals = ['', '', `Total (${rep.rows.length})`, '', sum(rep.rows, 4), sum(rep.rows, 5)];
   } else if (kind === 'proveedores') {
     rep.columns = [['Proveedor', 'text'], ['Teléfono', 'text'], ['Compras', 'int'], ['Total comprado', 'money'], ['Se le debe', 'money'], ['Última compra', 'text']];
-    rep.rows = db.prepare(`SELECT s.name, s.phone, (SELECT COUNT(*) FROM purchases WHERE supplier_id=s.id) AS n, COALESCE((SELECT SUM(total) FROM purchases WHERE supplier_id=s.id),0) AS bought,
-        COALESCE((SELECT SUM(amount) FROM supplier_movements WHERE supplier_id=s.id),0) AS owed, COALESCE((SELECT MAX(bought_at) FROM purchases WHERE supplier_id=s.id),'') AS last
+    rep.rows = db.prepare(`SELECT s.name, s.phone, (SELECT COUNT(*) FROM purchases WHERE supplier_id=s.id AND voided=0) AS n, COALESCE((SELECT SUM(total) FROM purchases WHERE supplier_id=s.id AND voided=0),0) AS bought,
+        COALESCE((SELECT SUM(amount) FROM supplier_movements WHERE supplier_id=s.id),0) AS owed, COALESCE((SELECT MAX(bought_at) FROM purchases WHERE supplier_id=s.id AND voided=0),'') AS last
       FROM suppliers s WHERE s.active = 1 ORDER BY owed DESC, s.name COLLATE NOCASE`).all().map((r) => [r.name, r.phone, r.n, round2(r.bought), round2(r.owed), r.last]);
     rep.totals = ['Total', '', sum(rep.rows, 2), sum(rep.rows, 3), sum(rep.rows, 4), ''];
   } else if (kind === 'stock') {

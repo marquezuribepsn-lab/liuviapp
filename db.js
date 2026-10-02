@@ -378,6 +378,9 @@ export function openDb(path = defaultDbPath()) {
   ensureColumn('user_sessions', 'locked', 'INTEGER DEFAULT 0');    // sesión bloqueada (pantalla de bloqueo)
   ensureColumn('user_sessions', 'last_seen', 'TEXT');              // última actividad, para el bloqueo por inactividad
   ensureColumn('articles', 'brand_id');
+  ensureColumn('purchases', 'voided', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn('purchases', 'voided_at', 'TEXT');
+  ensureColumn('purchases', 'edited_at', 'TEXT');
   ensureColumn('sale_items', 'brand', 'TEXT'); // marca al momento de vender, para las estadísticas por marca
 
   // Marcas que maneja el local (se pueden agregar, renombrar y borrar desde Artículos).
