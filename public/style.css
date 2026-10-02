@@ -260,3 +260,6 @@ body.locked>footer{display:none}
 .dash-alert{padding:10px 14px;border-radius:10px;margin-bottom:10px;font-size:14px;border:1px solid var(--line);background:var(--card)}
 .dash-alert.warn{background:#fff6dd;border-color:#f0d58a;color:#6b5200}
 .dash-alert.bad{background:#fde8e8;border-color:#f0a8a8;color:#8a1c1c}
+
+#repTable tr.tot td{border-top:2px solid var(--ink)}
+#repTable th,#repTable td{white-space:nowrap}

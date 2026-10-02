@@ -5,6 +5,8 @@ import { join, extname, normalize, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createBackups } from './backup.js';
 import { createGoogleDrive } from './gdrive.js';
+import { REPORTS, buildReport, reportSheet, isDay } from './reports.js';
+import { buildXlsx } from './xlsx.js';
 import { createImporter, ImportError, SheetFormatError } from './importer.js';
 import { appVersion, getSetting, setSetting } from './db.js';
 import {
@@ -945,6 +947,26 @@ export function createApp(db, opts = {}) {
     return { period: cur, ...totals, byMethod, topArticles, bySeller, byBrand };
   });
 
+
+  // Reportes: ver en pantalla, imprimir (PDF) o bajar a Excel.
+  const allowedReports = (can) => REPORTS.filter((r) => r.perm.some(can));
+  const reportFor = (kind, query, can) => {
+    const def = allowedReports(can).find((r) => r.kind === kind);
+    if (!def) throw new HttpError(def === undefined && REPORTS.some((r) => r.kind === kind) ? 403 : 404, 'Reporte no disponible');
+    const today = new Date().toLocaleDateString('sv-SE');
+    const from = query.get('from') || today, to = query.get('to') || from;
+    if (!isDay(from) || !isDay(to)) throw bad('Fechas inválidas');
+    if (from > to) throw bad('La fecha «desde» no puede ser posterior a «hasta»');
+    if ((new Date(to) - new Date(from)) / 86_400_000 > 3660) throw bad('El período es demasiado largo (máximo 10 años)');
+    return buildReport(db, kind, { from, to }, can);
+  };
+  route('GET', '/api/reports', ['estadisticas.ver', 'caja.ver', 'stock.ver', 'clientes.ver'], ({ can }) => allowedReports(can).map(({ kind, label, range }) => ({ kind, label, range })));
+  route('GET', '/api/reports/:kind', ['estadisticas.ver', 'caja.ver', 'stock.ver', 'clientes.ver'], ({ params, query, can }) => reportFor(params.kind, query, can));
+  route('GET', '/api/reports/:kind/xlsx', ['estadisticas.ver', 'caja.ver', 'stock.ver', 'clientes.ver'], ({ params, query, can }) => {
+    const rep = reportFor(params.kind, query, can);
+    const stamp = rep.kind + (REPORTS.find((r) => r.kind === rep.kind).range ? `-${query.get('from') || ''}${query.get('to') && query.get('to') !== query.get('from') ? '_a_' + query.get('to') : ''}` : `-${new Date().toLocaleDateString('sv-SE')}`);
+    return { raw: buildXlsx([reportSheet(rep)]), filename: `liuvi-${stamp.replace(/[^\w.-]/g, '')}.xlsx`, type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' };
+  });
 
   // Panel de inicio: un resumen de cómo viene el día. Cada bloque solo se manda si el usuario tiene el permiso correspondiente.
   route('GET', '/api/dashboard', ['estadisticas.ver', 'caja.ver'], ({ can }) => {

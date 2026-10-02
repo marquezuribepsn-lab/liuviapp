@@ -58,8 +58,8 @@ const articleLabel = (a) => [a.brand, a.name, a.size && `Talle ${a.size}`, a.col
 
 // ---------- Pestañas ----------
 let currentTab = 'venta';
-const loaders = { inicio: loadDashboard, venta: loadCash, clientes: loadCustomers, etiquetas: loadPrintTab, articulos: loadArticles, stock: loadStock, stats: loadStats, usuarios: loadUsers, copias: loadBackup };
-const TAB_PERMS = { inicio: ['estadisticas.ver', 'caja.ver'], venta: ['ventas.cobrar', 'caja.ver', 'caja.operar'], clientes: ['clientes.ver'], articulos: ['articulos.ver'], etiquetas: ['articulos.ver'], stock: ['stock.ver'], stats: ['estadisticas.ver'], usuarios: ['usuarios.admin'], copias: ['sistema.copias'] };
+const loaders = { inicio: loadDashboard, reportes: loadReports, venta: loadCash, clientes: loadCustomers, etiquetas: loadPrintTab, articulos: loadArticles, stock: loadStock, stats: loadStats, usuarios: loadUsers, copias: loadBackup };
+const TAB_PERMS = { inicio: ['estadisticas.ver', 'caja.ver'], venta: ['ventas.cobrar', 'caja.ver', 'caja.operar'], clientes: ['clientes.ver'], articulos: ['articulos.ver'], etiquetas: ['articulos.ver'], stock: ['stock.ver'], stats: ['estadisticas.ver'], reportes: ['estadisticas.ver', 'caja.ver', 'stock.ver', 'clientes.ver'], usuarios: ['usuarios.admin'], copias: ['sistema.copias'] };
 function showTab(name) {
   currentTab = name;
   $$('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
@@ -1166,6 +1166,64 @@ $('#groupSeg').addEventListener('click', guard(async (e) => {
   group = e.target.dataset.g;
   $$('#groupSeg button').forEach((b) => b.classList.toggle('active', b === e.target));
   await loadStats();
+}));
+
+// ---------- Reportes ----------
+let repLoaded = false, repData = null;
+const repCell = (type, v) => (v === '' || v === null || v === undefined ? '' : type === 'money' ? money(v) : type === 'int' ? String(v) : esc(String(v)));
+async function loadReports() {
+  if (repLoaded) return;
+  const kinds = await api('GET', '/reports');
+  $('#repKind').innerHTML = kinds.map((k) => `<option value="${k.kind}" data-range="${k.range ? 1 : 0}">${esc(k.label)}</option>`).join('');
+  $('#repFrom').value = $('#repTo').value = today();
+  repLoaded = true; syncRepRange();
+}
+const syncRepRange = () => { const r = $('#repKind').selectedOptions[0]?.dataset.range === '1'; $('#repRange').hidden = !r; $('#repPresets').hidden = !r; };
+$('#repKind').addEventListener('change', () => { syncRepRange(); $('#repCard').hidden = true; repData = null; });
+$('#repPresets').addEventListener('click', (e) => {
+  const p = e.target.dataset.p; if (!p) return;
+  const day = (d) => d.toLocaleDateString('sv-SE'), n = new Date();
+  const ranges = {
+    today: [n, n], yesterday: [new Date(n - 86_400_000), new Date(n - 86_400_000)], week: [new Date(n - 6 * 86_400_000), n],
+    month: [new Date(n.getFullYear(), n.getMonth(), 1), n], lastmonth: [new Date(n.getFullYear(), n.getMonth() - 1, 1), new Date(n.getFullYear(), n.getMonth(), 0)],
+    year: [new Date(n.getFullYear(), 0, 1), n],
+  };
+  [$('#repFrom').value, $('#repTo').value] = ranges[p].map(day);
+});
+const repQuery = () => `from=${$('#repFrom').value}&to=${$('#repTo').value}`;
+async function viewReport() {
+  $('#repError').textContent = '';
+  try {
+    repData = await api('GET', `/reports/${$('#repKind').value}?${repQuery()}`);
+  } catch (e) { $('#repError').textContent = e.message; return null; }
+  const r = repData;
+  $('#repCard').hidden = false;
+  $('#repTitle').textContent = r.title; $('#repSub').textContent = r.subtitle;
+  $('#repTable thead').innerHTML = `<tr>${r.columns.map((c) => `<th${c.type === 'text' ? '' : ' class="num"'}>${esc(c.label)}</th>`).join('')}</tr>`;
+  const cells = (row, b) => `<tr${b ? ' class="tot"' : ''}>${row.map((v, i) => `<td${r.columns[i].type === 'text' ? '' : ' class="num"'}>${b && r.columns[i].type !== 'text' ? '<b>' + repCell(r.columns[i].type, v) + '</b>' : b ? '<b>' + esc(String(v)) + '</b>' : repCell(r.columns[i].type, v)}</td>`).join('')}</tr>`;
+  $('#repTable tbody').innerHTML = r.rows.map((row) => cells(row)).join('') || `<tr><td class="muted" colspan="${r.columns.length}">No hay datos en este período</td></tr>`;
+  $('#repTable tfoot').innerHTML = r.rows.length && r.totals ? cells(r.totals, true) : '';
+  $('#repCount').textContent = `${r.rows.length} fila${r.rows.length === 1 ? '' : 's'}`;
+  return r;
+}
+$('#repView').addEventListener('click', guard(viewReport));
+$('#repXlsx').addEventListener('click', guard(async () => {
+  $('#repError').textContent = '';
+  const res = await fetch(`/api/reports/${$('#repKind').value}/xlsx?${repQuery()}`);
+  if (!res.ok) { $('#repError').textContent = (await res.json().catch(() => null))?.error || 'No se pudo generar el Excel'; return; }
+  const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '')?.[1] || 'reporte.xlsx';
+  const url = URL.createObjectURL(await res.blob());
+  const link = Object.assign(document.createElement('a'), { href: url, download: name });
+  document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+}));
+$('#repPrint').addEventListener('click', guard(async () => {
+  const r = await viewReport(); if (!r) return;
+  const th = r.columns.map((c) => `<th style="text-align:${c.type === 'text' ? 'left' : 'right'}">${esc(c.label)}</th>`).join('');
+  const row = (cells, b) => `<tr>${cells.map((v, i) => `<td style="text-align:${r.columns[i].type === 'text' ? 'left' : 'right'};${b ? 'font-weight:700;border-top:2px solid #000' : ''}">${repCell(r.columns[i].type, v)}</td>`).join('')}</tr>`;
+  const html = `<div style="font:11px Arial,sans-serif;color:#000"><h2 style="margin:0 0 2px;font-size:18px">Liu Vi · ${esc(r.title)}</h2><div style="margin:0 0 10px;color:#444">${esc(r.subtitle)}</div>
+    <table style="border-collapse:collapse;width:100%"><thead><tr style="background:#eee">${th}</tr></thead><tbody>${r.rows.map((x) => row(x)).join('')}</tbody>${r.totals ? `<tfoot>${row(r.totals, true)}</tfoot>` : ''}</table></div>
+    <style>#printArea td,#printArea th{padding:3px 5px;border-bottom:1px solid #ccc}#printArea thead{display:table-header-group}#printArea tr{break-inside:avoid}</style>`;
+  await printHtml(html, `size:${pageName()} ${r.columns.length > 7 ? 'landscape' : 'portrait'};margin:10mm`);
 }));
 
 // ---------- Impresión ----------
