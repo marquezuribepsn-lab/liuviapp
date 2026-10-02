@@ -4,6 +4,8 @@ import { dirname, join } from 'node:path';
 import { openDb, defaultDbPath, migrateLegacyDb, dataSummary, appVersion, looksTemporary, clearSessionsIfRequired } from './db.js';
 import { openBrowser, probeInstance, portBusyMessage } from './launch.js';
 import { createApp } from './app.js';
+import { relaunchServer } from './updater.js';
+import { APP_DIR } from './db.js';
 
 const port = Number(process.env.PORT) || 3000;
 // Una sola computadora: por defecto solo acepta conexiones de esta misma PC.
@@ -15,9 +17,11 @@ if (!process.env.DB_PATH) {
 }
 const db = openDb();
 clearSessionsIfRequired(db); // al abrir el programa hay que iniciar sesión (configurable por el administrador)
-const app = createApp(db);
+let server;
+const app = createApp(db, { restart: () => relaunchServer({ appDir: APP_DIR, closeServer: () => server.close() }) });
 app.backups.start();
-const server = createServer(app);
+app.updater.start();
+server = createServer(app);
 const silent = process.env.LIUVI_SILENT === '1'; // abierto desde el instalador: sin ventana negra
 const appWindow = process.env.LIUVI_APP_WINDOW === '1';
 const url = `http://localhost:${port}`;

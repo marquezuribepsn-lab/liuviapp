@@ -1155,6 +1155,7 @@ async function loadDashboard() {
   $('#dashHello').textContent = `${h < 12 ? 'Buen día' : h < 20 ? 'Buenas tardes' : 'Buenas noches'}, ${me.user.name.split(' ')[0]}`;
   // Avisos que conviene ver apenas se abre el sistema.
   const alerts = [];
+  if (d.update) alerts.push(['warn', `Hay una versión nueva de Liu Vi (${d.update.latest}). Instalala desde la pestaña Copias > Actualizaciones.`]);
   if (d.cash && !d.cash.open) alerts.push(['warn', 'La caja está cerrada.']);
   if (d.backup) {
     if (!d.backup.configured) alerts.push(['bad', 'Todavía no configuraste las copias de seguridad.']);
@@ -1822,7 +1823,38 @@ function renderBackup(b) {
   $('#bkVersion').textContent = me?.version ? `v${me.version}` : '';
   $('#bkFiles tbody').innerHTML = b.files.map((f) => `<tr><td>${esc(f.name)}</td><td>${esc(f.at)}</td><td class="num">${(f.size / 1024).toFixed(0)} KB</td></tr>`).join('') || '<tr><td colspan="3" class="muted">Sin copias en la carpeta</td></tr>';
 }
-async function loadBackup() { renderBackup(await api('GET', '/backup')); }
+async function loadBackup() { renderBackup(await api('GET', '/backup')); if (can('usuarios.admin')) await loadUpdate(); else $('#updCard').hidden = true; }
+// Actualizaciones del programa
+function renderUpdate(u) {
+  $('#updCard').hidden = false;
+  $('#updAuto').checked = u.auto;
+  $('#updCheck').disabled = !u.enabled || u.busy; $('#updAuto').disabled = !u.enabled;
+  $('#updApply').hidden = !u.available;
+  $('#updInfo').textContent = !u.enabled ? `Versión instalada: ${u.version}. Las actualizaciones automáticas funcionan en el programa instalado con el instalador de Windows.`
+    : u.available ? `Hay una versión nueva: ${u.latest} (tenés la ${u.version}).`
+    : `Versión instalada: ${u.version}${u.latest ? ' · es la última' : ''}${u.checked_at ? ` · revisado ${u.checked_at.slice(0, 16)}` : ''}`;
+  $('#updNote').textContent = u.error ? `No se pudo buscar: ${u.error}` : u.available ? 'Al actualizar se hace una copia de seguridad, se instala la versión nueva y el sistema se reinicia solo (unos segundos). Tus datos no se tocan.' : '';
+}
+async function loadUpdate() { renderUpdate(await api('GET', '/update')); }
+$('#updCheck').addEventListener('click', guard(async () => {
+  const b = $('#updCheck'); b.disabled = true; b.textContent = 'Buscando…';
+  try { renderUpdate(await api('POST', '/update/check', {})); } catch (e) { $('#updNote').textContent = 'No se pudo buscar: ' + e.message; } finally { b.textContent = 'Buscar actualizaciones'; b.disabled = false; }
+}));
+$('#updAuto').addEventListener('change', guard(async () => { renderUpdate(await api('PUT', '/update', { auto: $('#updAuto').checked })); }));
+$('#updApply').addEventListener('click', guard(async () => {
+  if (!(await uiConfirm('Se instala la versión nueva y el sistema se reinicia solo (tarda unos segundos). Antes se hace una copia de seguridad de tus datos. Si estás cobrando, esperá a terminar.', { title: 'Actualizar Liu Vi', ok: 'Actualizar ahora' }))) return;
+  const b = $('#updApply'); b.disabled = true; b.textContent = 'Actualizando…';
+  try {
+    const r = await api('POST', '/update/apply', {});
+    $('#updNote').textContent = `Listo: se instaló la ${r.to}. Reiniciando…`;
+    // Cuando el sistema vuelve (ya en la versión nueva), se recarga la pantalla.
+    const t0 = Date.now();
+    const wait = setInterval(async () => {
+      if (Date.now() - t0 > 90_000) { clearInterval(wait); $('#updNote').textContent = 'El sistema tarda en volver. Cerrá y abrí Liu Vi desde el acceso directo.'; return; }
+      try { const m = await (await fetch('/api/auth/me', { cache: 'no-store' })).json(); if (m.version === r.to) { clearInterval(wait); location.reload(); } } catch { /* reiniciando */ }
+    }, 1500);
+  } catch (e) { $('#updNote').textContent = 'No se pudo actualizar: ' + e.message; b.disabled = false; b.textContent = 'Actualizar ahora'; }
+}));
 // Horarios: «veces por día» más un horario editable para cada una.
 const COUNTS = [1, 2, 3, 4, 6, 8, 12, 24];
 function defaultTimes(n) {

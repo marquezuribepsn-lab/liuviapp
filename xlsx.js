@@ -8,7 +8,7 @@ const MAX_ENTRY_BYTES = 64 * 1024 * 1024; // tope por archivo descomprimido (pro
 export class SheetFormatError extends Error {}
 
 // ---------- ZIP ----------
-function readZip(buf) {
+export function readZip(buf) {
   let eocd = -1;
   for (let i = buf.length - 22; i >= Math.max(0, buf.length - 22 - 65535); i--) {
     if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
@@ -46,7 +46,7 @@ function readZip(buf) {
   };
 }
 
-function writeZip(files) {
+export function writeZip(files) {
   const parts = [], central = [];
   let offset = 0;
   const d = new Date();
