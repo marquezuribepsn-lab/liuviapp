@@ -1,8 +1,9 @@
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { join, extname, normalize } from 'node:path';
+import { join, extname, normalize, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createBackups } from './backup.js';
+import { createGoogleDrive } from './gdrive.js';
 import { createImporter, ImportError, SheetFormatError } from './importer.js';
 import { appVersion, getSetting, setSetting } from './db.js';
 import {
@@ -23,6 +24,7 @@ class HttpError extends Error {
   constructor(status, message, extra = {}) { super(message); this.status = status; this.extra = extra; }
 }
 const bad = (msg) => new HttpError(400, msg);
+const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const round2 = (n) => Math.round(n * 100) / 100;
 
 function tx(db, fn) {
@@ -39,8 +41,10 @@ function num(v, name, { min = 0, int = false } = {}) {
   return n;
 }
 
-export function createApp(db) {
-  const backups = createBackups(db);
+export function createApp(db, opts = {}) {
+  const gdrive = createGoogleDrive(db, opts.google);
+  const dbFile = db.prepare('PRAGMA database_list').get()?.file;
+  const backups = createBackups(db, { gdrive, defaultDir: dbFile ? join(dirname(dbFile), 'copias') : null });
   const openSession = () => db.prepare('SELECT * FROM cash_sessions WHERE closed_at IS NULL').get();
   const requireSession = () => {
     const s = openSession();
@@ -264,14 +268,14 @@ export function createApp(db) {
     const sold = '(SELECT DISTINCT article_id FROM sale_items)';
     const r = db.prepare(`SELECT COUNT(*) AS total, COALESCE(SUM(active),0) AS active, COALESCE(SUM(CASE WHEN active = 1 THEN stock ELSE 0 END),0) AS units,
       COALESCE(SUM(CASE WHEN id IN ${sold} THEN 1 ELSE 0 END),0) AS with_sales FROM articles`).get();
-    return { ...r, deletable: r.total - r.with_sales, backup: !!backups.status().dir };
+    return { ...r, deletable: r.total - r.with_sales, backup: !!backups.dirOf() };
   });
   route('POST', '/api/stock/clear', 'stock.limpiar', ({ body, user }) => {
     if (importer.isRunning()) throw new HttpError(409, 'Hay una carga de Excel en curso. Esperá a que termine.');
     if (!['zero', 'delete'].includes(body.mode)) throw bad('Elegí qué querés hacer con el stock');
     if (String(body.confirm ?? '').trim().toUpperCase() !== 'LIMPIAR') throw bad('Para confirmar, escribí la palabra LIMPIAR');
     let backup = false;
-    if (backups.status().dir) {
+    if (backups.dirOf()) {
       try { backups.run('antes de limpiar el stock'); backup = true; }
       catch (e) { throw new HttpError(500, `No se limpió nada: no se pudo hacer la copia de seguridad previa (${e.message}). Revisá la pestaña Copias.`); }
     }
@@ -754,11 +758,37 @@ export function createApp(db) {
   const BACKUP = 'sistema.copias';
   route('GET', '/api/backup', BACKUP, () => backups.status());
   route('PUT', '/api/backup', BACKUP, ({ body }) => {
-    try { backups.configure({ dir: body.dir, auto: body.auto }); } catch (e) { throw bad(e.message); }
+    try { backups.configure({ dir: body.dir, auto: body.auto, pc_name: body.pc_name }); } catch (e) { throw bad(e.message); }
     return backups.status();
   });
-  route('POST', '/api/backup/run', BACKUP, () => {
+  route('POST', '/api/backup/run', BACKUP, async () => {
     try { backups.run('manual'); } catch (e) { throw bad(e.message); }
+    await gdrive.idle(); // si hay Drive conectado, el resultado de la subida ya figura en el estado
+    return backups.status();
+  });
+
+  // Google Drive
+  route('PUT', '/api/backup/google/credentials', BACKUP, ({ body }) => {
+    try { gdrive.saveCredentials(body); } catch (e) { throw bad(e.message); }
+    return backups.status();
+  });
+  route('POST', '/api/backup/google/start', BACKUP, ({ req }) => {
+    const host = String(req.headers.host || '');
+    if (!/^(127\.0\.0\.1|localhost|\[::1\]):\d+$/.test(host)) throw bad('Para conectar Google abrí el sistema desde esta computadora, en http://127.0.0.1:3000 (no desde otro equipo)');
+    try { return { url: gdrive.authUrl(`http://${host}/api/backup/google/callback`) }; } catch (e) { throw bad(e.message); }
+  });
+  // Google vuelve acá con el navegador (sin cookie de sesión: la protege el "state" de un solo uso).
+  route('GET', '/api/backup/google/callback', 'public', async ({ query }) => {
+    const page = (ok, msg) => ({ html: `<!doctype html><meta charset="utf-8"><title>Liu Vi</title><meta http-equiv="refresh" content="${ok ? 2 : 6};url=/#copias">
+      <body style="font:18px system-ui;max-width:520px;margin:15vh auto;padding:0 20px;text-align:center"><h2>${ok ? '✅' : '⚠️'} ${esc(msg)}</h2><p>Volviendo al sistema…</p></body>` });
+    if (query.get('error')) return page(false, query.get('error') === 'access_denied' ? 'No diste el permiso: Google Drive no quedó conectado.' : `Google devolvió un error (${query.get('error')})`);
+    try {
+      await gdrive.finish(query.get('state') || '', query.get('code') || '');
+      return page(true, 'Google Drive conectado');
+    } catch (e) { return page(false, e.message); }
+  });
+  route('POST', '/api/backup/google/disconnect', BACKUP, async () => {
+    await gdrive.disconnect();
     return backups.status();
   });
 
@@ -801,7 +831,11 @@ export function createApp(db) {
           // Defensa extra contra CSRF: las escrituras solo se aceptan como JSON (un form de otro sitio no puede enviarlo).
           if (req.method !== 'GET' && !String(req.headers['content-type'] || '').includes('application/json')) throw bad('Content-Type inválido');
           const body = req.method === 'GET' ? {} : await readBody(req);
-          const out = r.handler({ params, query: url.searchParams, body, user, can, req, res });
+          const out = await r.handler({ params, query: url.searchParams, body, user, can, req, res });
+          if (out?.html) {
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'" });
+            return res.end(out.html);
+          }
           if (out?.raw) {
             res.writeHead(200, { 'Content-Type': out.type, 'Content-Disposition': `attachment; filename="${out.filename}"`, 'Cache-Control': 'no-store' });
             return res.end(out.raw);
