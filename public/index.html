@@ -415,7 +415,7 @@
     <h3>Movimientos</h3>
     <div class="scrollBox" style="max-height:200px"><table id="sdMovs"><thead><tr><th>Fecha</th><th>Concepto</th><th>Monto</th><th>Usuario</th></tr></thead><tbody></tbody></table></div>
     <h3>Compras</h3>
-    <div class="scrollBox" style="max-height:220px"><table id="sdBuys"><thead><tr><th>N°</th><th>Fecha</th><th>Factura</th><th>Detalle</th><th>Total</th></tr></thead><tbody></tbody></table></div>
+    <div class="scrollBox" style="max-height:220px"><table id="sdBuys"><thead><tr><th>N°</th><th>Fecha</th><th>Factura</th><th>Detalle</th><th>Total</th><th></th></tr></thead><tbody></tbody></table></div>
   </dialog>
   <dialog id="supPayDialog">
     <form id="supPayForm" method="dialog">
@@ -430,7 +430,7 @@
   </dialog>
   <dialog id="buyDialog" class="wide">
     <form id="buyForm" method="dialog">
-      <h2>Registrar compra</h2>
+      <h2 id="buyTitle">Registrar compra</h2>
       <div class="grid2">
         <label>Proveedor <select id="buySupplier" required></select></label>
         <label>Factura / remito (opcional) <input id="buyInvoice" maxlength="40"></label>
@@ -441,15 +441,15 @@
       <table id="buyItems"><thead><tr><th>Artículo</th><th>Cantidad</th><th>Costo unitario</th><th>Subtotal</th><th></th></tr></thead><tbody></tbody></table>
       <label class="inline"><input type="checkbox" id="buyUpdateCost" checked> Actualizar el costo de los artículos con estos valores</label>
       <div class="card" style="margin:10px 0"><div class="row"><b>Total de la compra</b><span class="grow"></span><b id="buyTotal">$ 0,00</b></div>
-        <div class="grid2">
+        <div id="buyPayBox"><div class="grid2">
           <label>Pago ahora (dejá 0 si queda a deber) <input id="buyPaid" type="number" min="0" step="0.01" value="0"></label>
           <label class="inline" style="align-self:end"><input type="checkbox" id="buyCash"> Sale de la caja</label>
         </div>
         <label id="buyMethodBox" hidden>Medio <select id="buyMethod"><option value="efectivo">Efectivo</option><option value="transferencia">Transferencia</option><option value="tarjeta">Tarjeta</option></select></label>
-        <p class="muted" id="buyOwe" style="margin:6px 0 0"></p>
+        <p class="muted" id="buyOwe" style="margin:6px 0 0"></p></div>
       </div>
       <div id="buyError" class="neg"></div>
-      <div class="row end"><button type="button" id="buyCancel" class="ghost">Cancelar</button><button class="primary">Registrar compra y sumar stock</button></div>
+      <div class="row end"><button type="button" id="buyCancel" class="ghost">Cancelar</button><button class="primary" id="buySubmit">Registrar compra y sumar stock</button></div>
     </form>
   </dialog>
 </section>

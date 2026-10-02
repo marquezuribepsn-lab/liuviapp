@@ -743,7 +743,7 @@ $('#impClose').addEventListener('click', () => $('#importDialog').close());
 
 // ---------- Stock ----------
 let adjArticle = null, sbSeq = 0;
-const REASON = { inicial: 'Carga inicial', compra: 'Compra', venta: 'Venta', anulacion: 'Anulación de venta', ajuste: 'Ajuste', devolucion: 'Devolución', limpieza: 'Limpieza de stock' };
+const REASON = { inicial: 'Carga inicial', compra: 'Compra', venta: 'Venta', anulacion: 'Anulación de venta', anulacion_compra: 'Anulación de compra', correccion_compra: 'Corrección de compra', ajuste: 'Ajuste', devolucion: 'Devolución', limpieza: 'Limpieza de stock' };
 async function loadStock() {
   const s = await api('GET', '/stock/summary');
   $('#stockSummary').innerHTML = [['Artículos (SKU)', s.skus], ['Unidades', s.units], ['Valor a costo', s.cost_value == null ? '—' : money(s.cost_value)], ['Valor a precio de venta', money(s.retail_value)], ['Con stock bajo', s.low]]
@@ -1218,7 +1218,7 @@ $('#groupSeg').addEventListener('click', guard(async (e) => {
 }));
 
 // ---------- Proveedores y compras ----------
-const owedHtml = (n) => (n > 0.004 ? `<b class="neg">${money(n)}</b>` : '<span class="muted">al día</span>');
+const owedHtml = (n) => (n > 0.004 ? `<b class="neg">${money(n)}</b>` : n < -0.004 ? `<span class="pos">${money(-n)} a favor</span>` : '<span class="muted">al día</span>');
 async function loadSuppliers() {
   const q = encodeURIComponent($('#supSearch').value.trim());
   let rows = await api('GET', `/suppliers?q=${q}`);
@@ -1258,7 +1258,7 @@ async function openSupplierDetail(id) {
   supDetailId = id;
   $('#sdName').textContent = s.name;
   $('#sdInfo').textContent = [s.phone, s.email, s.note].filter(Boolean).join(' · ');
-  $('#sdKpis').innerHTML = [['Se le debe', money(Math.max(0, s.owed))], ['Compras', s.purchases_count], ['Total comprado', money(s.purchases_total)]].map(([k, v]) => `<div class="kpi"><span>${k}</span><b>${v}</b></div>`).join('');
+  $('#sdKpis').innerHTML = [[s.owed < -0.004 ? 'Saldo a favor' : 'Se le debe', money(Math.abs(s.owed))], ['Compras', s.purchases_count], ['Total comprado', money(s.purchases_total)]].map(([k, v]) => `<div class="kpi"><span>${k}</span><b>${v}</b></div>`).join('');
   const edit = can('proveedores.editar');
   $('#sdActions').innerHTML = edit ? `<button class="primary" data-act="buy">Registrar compra</button><button class="ghost" data-act="pay" ${s.owed > 0.004 ? '' : 'disabled'}>Pagar deuda</button><button class="ghost" data-act="edit">Editar datos</button><button class="ghost" data-act="${s.active ? 'off' : 'on'}">${s.active ? 'Dar de baja' : 'Reactivar'}</button>` : '';
   $('#sdActions').onclick = guard(async (e) => {
@@ -1271,7 +1271,13 @@ async function openSupplierDetail(id) {
     }
   });
   $('#sdMovs tbody').innerHTML = s.movements.map((m) => `<tr><td>${esc(m.created_at.slice(0, 16))}</td><td>${esc(m.concept)}${m.from_cash ? ' <small class="muted">(de la caja)</small>' : ''}</td><td class="num ${m.amount < 0 ? 'pos' : 'neg'}">${m.amount < 0 ? '−' : '+'}${money(Math.abs(m.amount))}</td><td>${esc(m.user_name || '')}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">Sin movimientos</td></tr>';
-  $('#sdBuys tbody').innerHTML = s.purchases.map((p) => `<tr><td>${p.id}</td><td>${esc(p.bought_at)}</td><td>${esc(p.invoice || '—')}</td><td>${p.items.map((i) => `${i.qty}× ${esc(i.name)}`).join(', ')}</td><td class="num">${money(p.total)}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">Sin compras</td></tr>';
+  $('#sdBuys tbody').innerHTML = s.purchases.map((p) => `<tr${p.voided ? ' style="opacity:.55"' : ''}><td>${p.id}</td><td>${esc(p.bought_at)}</td><td>${esc(p.invoice || '—')}</td><td>${p.items.map((i) => `${i.qty}× ${esc(i.name)}`).join(', ')}</td>
+    <td class="num">${p.voided ? `<s>${money(p.total)}</s> <small>anulada</small>` : money(p.total)}</td>
+    <td>${edit && !p.voided ? `<button class="link" data-pedit="${p.id}">Editar</button><button class="link" data-pvoid="${p.id}" data-paid="${p.paid}">Anular</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Sin compras</td></tr>';
+  $('#sdBuys').onclick = guard(async (e) => {
+    if (e.target.dataset.pedit) return openBuyDialog(id, Number(e.target.dataset.pedit));
+    if (e.target.dataset.pvoid) await voidPurchase(Number(e.target.dataset.pvoid), Number(e.target.dataset.paid), id);
+  });
   if (!$('#supDetail').open) $('#supDetail').showModal();
 }
 $('#sdClose').addEventListener('click', () => $('#supDetail').close());
@@ -1295,7 +1301,22 @@ $('#supPayForm').addEventListener('submit', async (e) => {
 });
 // Compra: arma la lista de artículos y, al confirmar, suma el stock y deja la deuda (o el pago) registrada.
 let buyLines = [];
-async function openBuyDialog(supplierId) {
+let editingPurchase = null;
+async function voidPurchase(pid, paid, supplierId) {
+  const text = `Se anula la compra #${pid}: sale del stock lo que había entrado y se cancela la deuda.${paid > 0 ? ` Ya se habían pagado ${money(paid)}.` : ''}`;
+  const choice = paid > 0
+    ? await ask({ title: 'Anular compra', text: text + ' ¿Qué pasa con ese dinero?', stack: true, buttons: [
+      { label: 'Queda a favor con el proveedor', value: 'credit', kind: 'primary' }, { label: 'El proveedor me lo devolvió (entra a la caja si salió de ahí)', value: 'refund', kind: 'ghost' }, { label: 'Cancelar', value: null, kind: 'ghost', cancel: true }] })
+    : (await uiConfirm(text, { title: 'Anular compra', ok: 'Anular compra', danger: true })) ? 'credit' : null;
+  if (!choice) return;
+  try {
+    await api('POST', `/purchases/${pid}/void`, { refund: choice === 'refund' });
+    toast('Compra anulada'); if (typeof refreshCash === 'function') refreshCash().catch(() => {});
+    await loadSuppliers(); await openSupplierDetail(supplierId);
+  } catch (e) { await uiAlert(e.message, 'No se pudo anular'); }
+}
+async function openBuyDialog(supplierId, purchaseId = null) {
+  editingPurchase = purchaseId;
   const sups = await api('GET', '/suppliers');
   if (!sups.length) return uiAlert('Primero cargá al menos un proveedor.');
   $('#buySupplier').innerHTML = sups.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
@@ -1303,6 +1324,16 @@ async function openBuyDialog(supplierId) {
   $('#buyInvoice').value = ''; $('#buyDate').value = today(); $('#buySearch').value = ''; $('#buyResults').hidden = true;
   $('#buyPaid').value = 0; $('#buyCash').checked = false; $('#buyMethodBox').hidden = true; $('#buyUpdateCost').checked = true; $('#buyError').textContent = '';
   buyLines = []; renderBuy();
+  // Al editar: el proveedor y los pagos ya hechos no se tocan; se corrigen artículos, cantidades, costos y datos.
+  $('#buyTitle').textContent = purchaseId ? `Editar compra #${purchaseId}` : 'Registrar compra';
+  $('#buySupplier').disabled = !!purchaseId; $('#buyPayBox').hidden = !!purchaseId;
+  $('#buySubmit').textContent = purchaseId ? 'Guardar cambios' : 'Registrar compra y sumar stock';
+  $('#buyUpdateCost').checked = !purchaseId;
+  if (purchaseId) {
+    const p = await api('GET', '/purchases/' + purchaseId);
+    $('#buySupplier').value = p.supplier_id; $('#buyInvoice').value = p.invoice; $('#buyDate').value = p.bought_at;
+    buyLines = p.items.map((i) => ({ a: { id: i.article_id, name: i.name, stock: i.stock }, qty: i.qty, cost: i.cost })); renderBuy();
+  }
   $('#buyDialog').showModal(); $('#buySearch').focus();
 }
 function renderBuy() {
@@ -1345,6 +1376,11 @@ $('#buyForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   if (!buyLines.length) { $('#buyError').textContent = 'Agregá al menos un artículo'; return; }
   try {
+    if (editingPurchase) {
+      const r = await api('PUT', '/purchases/' + editingPurchase, { invoice: $('#buyInvoice').value, date: $('#buyDate').value, update_cost: $('#buyUpdateCost').checked, items: buyLines.map((l) => ({ article_id: l.a.id, qty: l.qty, cost: l.cost })) });
+      $('#buyDialog').close(); toast(`Compra corregida (${money(r.total)})`);
+      await loadSuppliers(); await openSupplierDetail(r.supplier_id); return;
+    }
     const r = await api('POST', '/purchases', {
       supplier_id: Number($('#buySupplier').value), invoice: $('#buyInvoice').value, date: $('#buyDate').value, update_cost: $('#buyUpdateCost').checked,
       items: buyLines.map((l) => ({ article_id: l.a.id, qty: l.qty, cost: l.cost })), paid_amount: Number($('#buyPaid').value) || 0,
