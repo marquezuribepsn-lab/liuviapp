@@ -48,6 +48,7 @@
     <button data-tab="clientes">Clientes</button>
     <button data-tab="articulos">Artículos</button>
     <button data-tab="stock">Stock</button>
+    <button data-tab="proveedores">Proveedores</button>
     <button data-tab="etiquetas">Etiquetas</button>
     <button data-tab="stats">Estadísticas</button>
     <button data-tab="reportes">Reportes</button>
@@ -383,6 +384,73 @@
       <p id="clrResult"></p>
       <div class="row end"><button type="button" class="primary" id="clrClose">Cerrar</button></div>
     </div>
+  </dialog>
+</section>
+
+<!-- PROVEEDORES -->
+<section id="proveedores" class="tab" hidden>
+  <div class="row">
+    <input id="supSearch" placeholder="Buscar proveedor por nombre o teléfono">
+    <label class="inline"><input type="checkbox" id="supDebt"> Solo con deuda</label>
+    <button id="supNew" class="ghost">+ Nuevo proveedor</button>
+    <button id="supBuy" class="primary">+ Registrar compra</button>
+  </div>
+  <table id="supTable"><thead><tr><th>Proveedor</th><th>Teléfono</th><th>Compras</th><th>Total comprado</th><th>Se le debe</th><th>Última compra</th></tr></thead><tbody></tbody></table>
+  <p class="muted" id="supNote" style="margin:8px 2px"></p>
+  <dialog id="supDialog">
+    <form id="supForm" method="dialog">
+      <h2 id="supTitle">Proveedor</h2>
+      <label>Nombre <input name="name" required maxlength="100"></label>
+      <div class="grid2"><label>Teléfono <input name="phone" maxlength="40"></label><label>Email <input name="email" type="email" maxlength="100"></label></div>
+      <label>Notas <input name="note" maxlength="300" placeholder="Ej: entrega los jueves"></label>
+      <div id="supError" class="neg"></div>
+      <div class="row end"><button type="button" id="supCancel" class="ghost">Cancelar</button><button class="primary">Guardar</button></div>
+    </form>
+  </dialog>
+  <dialog id="supDetail" class="wide">
+    <div class="row"><h2 id="sdName" style="margin:0"></h2><span class="grow"></span><button type="button" id="sdClose" class="ghost">Cerrar</button></div>
+    <p class="muted" id="sdInfo"></p>
+    <div class="kpis" id="sdKpis"></div>
+    <div class="row" id="sdActions"></div>
+    <h3>Movimientos</h3>
+    <div class="scrollBox" style="max-height:200px"><table id="sdMovs"><thead><tr><th>Fecha</th><th>Concepto</th><th>Monto</th><th>Usuario</th></tr></thead><tbody></tbody></table></div>
+    <h3>Compras</h3>
+    <div class="scrollBox" style="max-height:220px"><table id="sdBuys"><thead><tr><th>N°</th><th>Fecha</th><th>Factura</th><th>Detalle</th><th>Total</th></tr></thead><tbody></tbody></table></div>
+  </dialog>
+  <dialog id="supPayDialog">
+    <form id="supPayForm" method="dialog">
+      <h2>Pagar a <span id="spName"></span></h2>
+      <p class="muted" id="spOwed"></p>
+      <label>Monto <input name="amount" type="number" min="0.01" step="0.01" required></label>
+      <label class="inline"><input type="checkbox" name="from_cash" id="spCash"> Sale de la caja (queda como egreso de hoy)</label>
+      <label id="spMethodBox" hidden>Medio <select name="method"><option value="efectivo">Efectivo</option><option value="transferencia">Transferencia</option><option value="tarjeta">Tarjeta</option></select></label>
+      <div id="spError" class="neg"></div>
+      <div class="row end"><button type="button" id="spCancel" class="ghost">Cancelar</button><button class="primary">Registrar pago</button></div>
+    </form>
+  </dialog>
+  <dialog id="buyDialog" class="wide">
+    <form id="buyForm" method="dialog">
+      <h2>Registrar compra</h2>
+      <div class="grid2">
+        <label>Proveedor <select id="buySupplier" required></select></label>
+        <label>Factura / remito (opcional) <input id="buyInvoice" maxlength="40"></label>
+        <label>Fecha <input id="buyDate" type="date" required></label>
+      </div>
+      <label>Agregar artículo (escaneá el código o buscá por nombre) <input id="buySearch" autocomplete="off" placeholder="Código de barras o nombre"></label>
+      <div class="scrollBox" id="buyResults" style="max-height:150px" hidden></div>
+      <table id="buyItems"><thead><tr><th>Artículo</th><th>Cantidad</th><th>Costo unitario</th><th>Subtotal</th><th></th></tr></thead><tbody></tbody></table>
+      <label class="inline"><input type="checkbox" id="buyUpdateCost" checked> Actualizar el costo de los artículos con estos valores</label>
+      <div class="card" style="margin:10px 0"><div class="row"><b>Total de la compra</b><span class="grow"></span><b id="buyTotal">$ 0,00</b></div>
+        <div class="grid2">
+          <label>Pago ahora (dejá 0 si queda a deber) <input id="buyPaid" type="number" min="0" step="0.01" value="0"></label>
+          <label class="inline" style="align-self:end"><input type="checkbox" id="buyCash"> Sale de la caja</label>
+        </div>
+        <label id="buyMethodBox" hidden>Medio <select id="buyMethod"><option value="efectivo">Efectivo</option><option value="transferencia">Transferencia</option><option value="tarjeta">Tarjeta</option></select></label>
+        <p class="muted" id="buyOwe" style="margin:6px 0 0"></p>
+      </div>
+      <div id="buyError" class="neg"></div>
+      <div class="row end"><button type="button" id="buyCancel" class="ghost">Cancelar</button><button class="primary">Registrar compra y sumar stock</button></div>
+    </form>
   </dialog>
 </section>
 

@@ -224,6 +224,48 @@ export function openDb(path = defaultDbPath()) {
 
     -- Apartados (señas): la mercadería queda reservada a nombre del cliente hasta que complete el pago.
     -- Recién al completarse se genera la venta (y sale del stock). Las señas no pasan por la cuenta corriente.
+    -- Proveedores y compras. El saldo de un proveedor es la suma de sus movimientos (positivo = se le debe, negativo = pagos).
+    CREATE TABLE IF NOT EXISTS suppliers (
+      id         INTEGER PRIMARY KEY,
+      name       TEXT NOT NULL,
+      phone      TEXT NOT NULL DEFAULT '',
+      email      TEXT NOT NULL DEFAULT '',
+      note       TEXT NOT NULL DEFAULT '',
+      active     INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    CREATE TABLE IF NOT EXISTS purchases (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
+      invoice     TEXT NOT NULL DEFAULT '',
+      bought_at   TEXT NOT NULL,
+      total       REAL NOT NULL,
+      note        TEXT NOT NULL DEFAULT '',
+      user_id     INTEGER,
+      created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    CREATE TABLE IF NOT EXISTS purchase_items (
+      id          INTEGER PRIMARY KEY,
+      purchase_id INTEGER NOT NULL REFERENCES purchases(id),
+      article_id  INTEGER NOT NULL REFERENCES articles(id),
+      name        TEXT NOT NULL,
+      qty         INTEGER NOT NULL CHECK (qty > 0),
+      cost        REAL NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS supplier_movements (
+      id          INTEGER PRIMARY KEY,
+      supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
+      amount      REAL NOT NULL CHECK (amount != 0),
+      concept     TEXT NOT NULL DEFAULT '',
+      method      TEXT,
+      purchase_id INTEGER REFERENCES purchases(id),
+      from_cash   INTEGER NOT NULL DEFAULT 0,
+      user_id     INTEGER,
+      created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_supplier_mov ON supplier_movements(supplier_id);
+    CREATE INDEX IF NOT EXISTS idx_purchase_items_article ON purchase_items(article_id);
+
     -- Cambios masivos de precios: cada tanda se puede deshacer (guarda los valores anteriores).
     CREATE TABLE IF NOT EXISTS price_batches (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,

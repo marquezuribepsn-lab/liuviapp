@@ -8,6 +8,8 @@ export const REPORTS = [
   { kind: 'marcas', label: 'Ventas por marca', range: true, perm: ['estadisticas.ver'] },
   { kind: 'vendedores', label: 'Ventas por vendedor', range: true, perm: ['estadisticas.ver'] },
   { kind: 'caja', label: 'Cajas (aperturas y cierres)', range: true, perm: ['caja.ver'] },
+  { kind: 'compras', label: 'Compras a proveedores', range: true, perm: ['proveedores.ver'] },
+  { kind: 'proveedores', label: 'Deudas con proveedores', range: false, perm: ['proveedores.ver'] },
   { kind: 'stock', label: 'Stock valorizado', range: false, perm: ['stock.ver'] },
   { kind: 'clientes', label: 'Cuentas corrientes de clientes', range: false, perm: ['clientes.ver'] },
 ];
@@ -74,6 +76,17 @@ export function buildReport(db, kind, { from, to }, can) {
         closed ? s.expected_cash : round2(s.opening_amount + cash), closed ? s.counted_cash : '', closed ? round2(s.counted_cash - s.expected_cash) : '', s.note || ''];
     });
     rep.totals = ['Total', '', '', sum(rep.rows, 3), sum(rep.rows, 4), sum(rep.rows, 5), sum(rep.rows, 6), '', '', sum(rep.rows, 9), ''];
+  } else if (kind === 'compras') {
+    rep.columns = [['N°', 'int'], ['Fecha', 'text'], ['Proveedor', 'text'], ['Factura / remito', 'text'], ['Unidades', 'int'], ['Total', 'money']];
+    rep.rows = db.prepare(`SELECT p.id, p.bought_at, s.name, p.invoice, COALESCE((SELECT SUM(qty) FROM purchase_items WHERE purchase_id=p.id),0) AS units, p.total
+      FROM purchases p JOIN suppliers s ON s.id = p.supplier_id WHERE p.bought_at BETWEEN ? AND ? ORDER BY p.id`).all(from, to).map((r) => [r.id, r.bought_at, r.name, r.invoice, r.units, r.total]);
+    rep.totals = ['', '', `Total (${rep.rows.length})`, '', sum(rep.rows, 4), sum(rep.rows, 5)];
+  } else if (kind === 'proveedores') {
+    rep.columns = [['Proveedor', 'text'], ['Teléfono', 'text'], ['Compras', 'int'], ['Total comprado', 'money'], ['Se le debe', 'money'], ['Última compra', 'text']];
+    rep.rows = db.prepare(`SELECT s.name, s.phone, (SELECT COUNT(*) FROM purchases WHERE supplier_id=s.id) AS n, COALESCE((SELECT SUM(total) FROM purchases WHERE supplier_id=s.id),0) AS bought,
+        COALESCE((SELECT SUM(amount) FROM supplier_movements WHERE supplier_id=s.id),0) AS owed, COALESCE((SELECT MAX(bought_at) FROM purchases WHERE supplier_id=s.id),'') AS last
+      FROM suppliers s WHERE s.active = 1 ORDER BY owed DESC, s.name COLLATE NOCASE`).all().map((r) => [r.name, r.phone, r.n, round2(r.bought), round2(r.owed), r.last]);
+    rep.totals = ['Total', '', sum(rep.rows, 2), sum(rep.rows, 3), sum(rep.rows, 4), ''];
   } else if (kind === 'stock') {
     rep.columns = [['Artículo', 'text'], ['Marca', 'text'], ['Talle', 'text'], ['Color', 'text'], ['Código', 'text'], ['Stock', 'int'], ['Precio', 'money']];
     if (costs) rep.columns.push(['Costo', 'money'], ['Valor a costo', 'money']);
