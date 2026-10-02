@@ -42,6 +42,13 @@ test('ofertas: alta, validaciones, superposición y aplicación al vender', asyn
     assert.equal((await t.admin('POST', '/api/promotions', { name: 'otra', kind: 'percent', pct: 10, article_ids: [b.id] })).status, 409, 'un artículo no puede estar en dos ofertas activas');
     assert.equal((await t.admin('GET', '/api/promotions/active')).data.length, 1);
 
+    // Listado con filtro «solo ofertas» y etiqueta de la oferta vigente
+    const enOferta = (await t.admin('GET', '/api/articles?offers=1')).data;
+    assert.deepEqual(enOferta.map((x) => x.id).sort(), [a.id, b.id].sort());
+    assert.equal(enOferta[0].offer_name, '2x1 verano');
+    assert.equal((await t.admin('GET', '/api/articles?offers=1&q=Jean')).data.length, 1);
+    assert.equal((await t.admin('GET', '/api/articles')).data.find((x) => x.id === c.id).offer_name, null);
+
     const s1 = (await venta([{ article_id: a.id, qty: 2 }, { article_id: b.id, qty: 1 }])).data;
     // unidades: 30000, 10000, 10000 → grupo (30000,10000) paga 30000; sobra una remera sin pareja
     assert.equal(s1.promo_discount, 10000);
@@ -63,6 +70,7 @@ test('ofertas: alta, validaciones, superposición y aplicación al vender', asyn
 
     // Desactivar, editar con fechas vencidas y borrar
     await t.admin('PUT', `/api/promotions/${o1.id}`, { active: false });
+    assert.equal((await t.admin('GET', '/api/articles?offers=1')).data.length, 0, 'una oferta desactivada no cuenta');
     assert.equal((await venta([{ article_id: a.id, qty: 2 }])).data.promo_discount, 0, 'oferta desactivada');
     const o2 = (await t.admin('POST', '/api/promotions', { name: 'Vence ayer', kind: 'percent', pct: 50, ends_on: '2000-01-01', article_ids: [a.id] })).data;
     assert.equal((await t.admin('GET', '/api/promotions/active')).data.length, 0, 'las vencidas no se aplican');

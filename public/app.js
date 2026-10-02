@@ -77,7 +77,7 @@ function showTab(name) {
   const group = groupOf(name);
   if (group) lastInGroup[group] = name;
   $$('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === name || (!!group && b.dataset.group === group)));
-  $$('#subTabs button').forEach((b) => { b.hidden = b.dataset.in !== group || !tabAllowed(b.dataset.tab); b.classList.toggle('active', b.dataset.tab === name); });
+  $$('#subTabs button').forEach((b) => { b.hidden = b.dataset.in !== group || (b.dataset.need ? !can(b.dataset.need) : !tabAllowed(b.dataset.tab)); b.classList.toggle('active', b.dataset.tab === name); });
   $('#subTabs').hidden = !group;
   $$('.tab').forEach((s) => (s.hidden = s.id !== name));
   guard(loaders[name])();
@@ -657,8 +657,29 @@ const fileToBase64 = (file) => new Promise((resolve, reject) => {
   r.readAsDataURL(file);
 });
 // Cambio masivo de precios
-const prBody = () => ({ brand_id: $('#prBrand').value || null, category: $('#prCategory').value, query: $('#prQuery').value, only_stock: $('#prStock').checked,
+let prWho = 'group', prPicked = new Map(), prFound = [];
+const prBody = () => ({
+  ...(prWho === 'items' ? { article_ids: [...prPicked.keys()] } : { brand_id: $('#prBrand').value || null, category: $('#prCategory').value, query: $('#prQuery').value, only_stock: $('#prStock').checked }),
   target: $('#prTarget').value, mode: $('#prMode').value, value: $('#prValue').value === '' ? 0 : Number($('#prValue').value), round: Number($('#prRound').value) });
+function renderPricePicked() {
+  $('#prPickedCount').textContent = `(${prPicked.size})`;
+  $('#prPicked tbody').innerHTML = [...prPicked].map(([id, label]) => `<tr><td>${esc(label)}</td><td><button type="button" class="link" data-prm2="${id}">Quitar</button></td></tr>`).join('') || '<tr><td colspan="2" class="muted">Todavía no elegiste artículos</td></tr>';
+}
+async function searchPriceArticles() {
+  const q = $('#prSearch').value.trim();
+  prFound = q ? await api('GET', `/articles?limit=40&q=${encodeURIComponent(q)}`) : [];
+  $('#prResults tbody').innerHTML = prFound.map((a, i) => `<tr data-ppick="${i}" style="cursor:pointer${prPicked.has(a.id) ? ';opacity:.45' : ''}"><td>${esc(articleLabel(a))}</td><td class="num">${money(a.price)}</td></tr>`).join('') || `<tr><td colspan="2" class="muted">${q ? 'No se encontró ningún artículo' : 'Escribí para buscar'}</td></tr>`;
+}
+function setPriceWho(w) {
+  prWho = w;
+  $$('#prWho button').forEach((b) => b.classList.toggle('active', b.dataset.w === w));
+  $('#prGroup').hidden = w !== 'group'; $('#prItems').hidden = w !== 'items';
+  prReset();
+}
+$('#prWho').addEventListener('click', (e) => { if (e.target.dataset.w) { setPriceWho(e.target.dataset.w); if (e.target.dataset.w === 'items') $('#prSearch').focus(); } });
+$('#prSearch').addEventListener('input', debounce(guard(searchPriceArticles)));
+$('#prResults').addEventListener('click', (e) => { const tr = e.target.closest('tr[data-ppick]'); if (!tr) return; const a = prFound[Number(tr.dataset.ppick)]; prPicked.set(a.id, articleLabel(a)); renderPricePicked(); searchPriceArticles(); prReset(); });
+$('#prPicked').addEventListener('click', (e) => { if (e.target.dataset.prm2) { prPicked.delete(Number(e.target.dataset.prm2)); renderPricePicked(); searchPriceArticles(); prReset(); } });
 async function loadPriceHistory() {
   const h = await api('GET', '/prices/history');
   $('#prHistory tbody').innerHTML = h.map((b) => `<tr><td>${esc(b.created_at.slice(0, 16))}</td><td>${esc(b.description)}</td><td class="num">${b.count} art.</td><td>${b.undone ? '<span class="muted">deshecho</span>' : ''}</td></tr>`).join('') || '<tr><td class="muted">Todavía no hubo cambios</td></tr>';
@@ -669,7 +690,7 @@ $('#artPrices').addEventListener('click', guard(async () => {
   const brands = await api('GET', '/brands');
   $('#prBrand').innerHTML = '<option value="">Todas las marcas</option>' + brands.map((b) => `<option value="${b.id}">${esc(b.name)}</option>`).join('');
   $$('#prTarget option.col-cost').forEach((o) => { o.hidden = o.disabled = !can('costos.ver'); });
-  $('#prTarget').value = 'price'; $('#prValue').value = ''; prReset();
+  $('#prTarget').value = 'price'; $('#prValue').value = ''; prPicked = new Map(); $('#prSearch').value = ''; renderPricePicked(); searchPriceArticles(); setPriceWho('group');
   await loadPriceHistory();
   $('#priceDialog').showModal();
 }));
@@ -776,8 +797,7 @@ $('#impClose').addEventListener('click', () => $('#importDialog').close());
 let adjArticle = null, sbSeq = 0;
 const REASON = { inicial: 'Carga inicial', compra: 'Compra', venta: 'Venta', anulacion: 'Anulación de venta', anulacion_compra: 'Anulación de compra', correccion_compra: 'Corrección de compra', ajuste: 'Ajuste', devolucion: 'Devolución', limpieza: 'Limpieza de stock' };
 async function loadStock() {
-  $('#offNew').hidden = !can('articulos.editar');
-  loadOffersInfo().catch(() => {});
+  $('#offManage').hidden = !can('stock.ver');
   const s = await api('GET', '/stock/summary');
   $('#stockSummary').innerHTML = [['Artículos (SKU)', s.skus], ['Unidades', s.units], ['Valor a costo', s.cost_value == null ? '—' : money(s.cost_value)], ['Valor a precio de venta', money(s.retail_value)], ['Con stock bajo', s.low]]
     .map(([k, v]) => `<div class="kpi"><span>${k}</span><b>${v}</b></div>`).join('');
@@ -792,17 +812,17 @@ async function loadStock() {
 
 // Lista de búsqueda a la derecha del buscador: se filtra mientras se escribe y se elige con un clic.
 async function runStockBrowse() {
-  const q = $('#adjScan').value.trim(), brand = $('#sbBrand').value, low = $('#sbLow').checked, my = ++sbSeq;
-  if (!q && !brand && !low) {
-    $('#sbTable tbody').innerHTML = '<tr><td colspan="5" class="muted">Escribí o escaneá a la izquierda, o elegí una marca arriba, para ver los artículos.</td></tr>';
+  const q = $('#adjScan').value.trim(), brand = $('#sbBrand').value, low = $('#sbLow').checked, offersOnly = $('#sbOffers').checked, my = ++sbSeq;
+  if (!q && !brand && !low && !offersOnly) {
+    $('#sbTable tbody').innerHTML = '<tr><td colspan="6" class="muted">Escribí o escaneá a la izquierda, o elegí una marca o un filtro arriba, para ver los artículos.</td></tr>';
     $('#sbNote').textContent = ''; return;
   }
-  const rows = await api('GET', `/articles?q=${encodeURIComponent(q)}${brand ? `&brand_id=${brand}` : ''}${low ? '&low=1' : ''}&limit=300`);
+  const rows = await api('GET', `/articles?q=${encodeURIComponent(q)}${brand ? `&brand_id=${brand}` : ''}${low ? '&low=1' : ''}${offersOnly ? '&offers=1' : ''}&limit=300`);
   const total = api.total;
   if (my !== sbSeq) return; // llegó una respuesta de una búsqueda anterior
   window._sb = rows;
-  $('#sbTable tbody').innerHTML = rows.map((a) => `<tr data-id="${a.id}" class="${adjArticle?.id === a.id ? 'sel' : ''}"><td>${esc(a.brand || '—')}</td><td>${esc(a.name)}</td><td>${esc(a.size)}</td><td>${esc(a.color)}</td><td class="num ${a.stock <= a.min_stock ? 'low' : ''}">${a.stock}</td></tr>`).join('')
-    || '<tr><td colspan="5" class="muted">No se encontró ningún artículo</td></tr>';
+  $('#sbTable tbody').innerHTML = rows.map((a) => `<tr data-id="${a.id}" class="${adjArticle?.id === a.id ? 'sel' : ''}"><td>${esc(a.brand || '—')}</td><td>${esc(a.name)}</td><td>${esc(a.size)}</td><td>${esc(a.color)}</td><td class="num ${a.stock <= a.min_stock ? 'low' : ''}">${a.stock}</td><td>${a.offer_name ? `<span class="tag" title="${esc(a.offer_name)}">OFERTA · ${esc(a.offer_name.length > 22 ? a.offer_name.slice(0, 21) + '…' : a.offer_name)}</span>` : ''}</td></tr>`).join('')
+    || `<tr><td colspan="6" class="muted">${offersOnly ? 'No hay artículos en ofertas vigentes' : 'No se encontró ningún artículo'}</td></tr>`;
   $('#sbNote').textContent = total > rows.length ? `Mostrando ${rows.length} de ${total}: afiná la búsqueda para ver el resto.` : `${total} artículo${total === 1 ? '' : 's'}. Tocá uno para elegirlo.`;
 }
 const browseSoon = debounce(guard(runStockBrowse), 200);
@@ -1258,14 +1278,8 @@ const OFFER_STATE = (o) => {
   if (o.ends_on && o.ends_on < t) return ['Vencida', 'neg'];
   return ['Vigente', 'pos'];
 };
-async function loadOffersInfo() {
-  const list = await api('GET', '/promotions');
-  const live = list.filter((o) => OFFER_STATE(o)[0] === 'Vigente').length;
-  $('#offInfo').textContent = list.length ? `${live} oferta${live === 1 ? '' : 's'} vigente${live === 1 ? '' : 's'} de ${list.length}. Se aplican solas al cobrar.` : 'Todavía no creaste ofertas. Podés hacer descuentos en %, precio fijo, 2x1, 3x2 o segunda unidad con descuento.';
-  return list;
-}
 async function openOffersList() {
-  const list = await loadOffersInfo();
+  const list = await api('GET', '/promotions');
   const edit = can('articulos.editar');
   $('#offTable tbody').innerHTML = list.map((o) => {
     const [st, cls] = OFFER_STATE(o);
@@ -1277,16 +1291,17 @@ async function openOffersList() {
   if (!$('#offListDialog').open) $('#offListDialog').showModal();
 }
 let offersCache = [];
-$('#offView').addEventListener('click', guard(openOffersList));
+$('#offManage').addEventListener('click', guard(openOffersList));
+$('#sbOffers').addEventListener('change', guard(runStockBrowse));
 $('#offListClose').addEventListener('click', () => $('#offListDialog').close());
 $('#offTable').addEventListener('click', guard(async (e) => {
   const d = e.target.dataset;
   if (d.oedit) return openOfferDialog(offersCache.find((o) => o.id === Number(d.oedit)));
   if (d.otoggle) {
     try { await api('PUT', '/promotions/' + d.otoggle, { active: d.on === '1' }); } catch (err) { await uiAlert(err.message, 'No se pudo cambiar'); return; }
-    await openOffersList(); refreshOffers(true);
+    await openOffersList(); refreshOffers(true); if (currentTab === 'stock') runStockBrowse();
   }
-  if (d.odel && await uiConfirm('¿Borrar esta oferta? Las ventas ya hechas no cambian.', { ok: 'Borrar', danger: true })) { await api('DELETE', '/promotions/' + d.odel); await openOffersList(); refreshOffers(true); }
+  if (d.odel && await uiConfirm('¿Borrar esta oferta? Las ventas ya hechas no cambian.', { ok: 'Borrar', danger: true })) { await api('DELETE', '/promotions/' + d.odel); await openOffersList(); refreshOffers(true); if (currentTab === 'stock') runStockBrowse(); }
 }));
 let offPicked = new Map(), offFound = [], editingOffer = null;
 const OFFER_HELP = {
@@ -1344,7 +1359,7 @@ $('#offForm').addEventListener('submit', async (e) => {
   try {
     if (editingOffer) await api('PUT', '/promotions/' + editingOffer, body); else await api('POST', '/promotions', body);
     $('#offDialog').close(); toast('Oferta guardada'); refreshOffers(true);
-    await loadOffersInfo();
+    if (currentTab === 'stock') await runStockBrowse();
   } catch (err) { setMsg('offError', err.message); }
 });
 

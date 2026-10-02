@@ -70,6 +70,8 @@ export function createApp(db, opts = {}) {
 
   // `reserved`: unidades apartadas (con seña) que todavía no se pueden vender a otro cliente.
   const ART = `SELECT a.*, b.name AS brand,
+    (SELECT p.name FROM promotion_articles pa JOIN promotions p ON p.id = pa.promotion_id WHERE pa.article_id = a.id AND p.active = 1
+       AND (p.starts_on IS NULL OR p.starts_on <= date('now','localtime')) AND (p.ends_on IS NULL OR p.ends_on >= date('now','localtime')) LIMIT 1) AS offer_name,
     COALESCE((SELECT SUM(li.qty) FROM layaway_items li JOIN layaways l ON l.id = li.layaway_id WHERE li.article_id = a.id AND l.status = 'open'),0) AS reserved
     FROM articles a LEFT JOIN brands b ON b.id = a.brand_id`;
 
@@ -146,10 +148,13 @@ export function createApp(db, opts = {}) {
     const all = query.get('all') === '1';
     const low = query.get('low') === '1';
     const brand = query.get('brand_id') || null;
+    const onlyOffers = query.get('offers') === '1'; // solo los que están en una oferta vigente hoy
     const where = `
       WHERE (? OR a.active = 1) AND (a.name LIKE ? OR a.barcode LIKE ? OR a.category LIKE ? OR a.color LIKE ? OR a.size LIKE ? OR b.name LIKE ?)
-        AND (? = 0 OR a.stock <= a.min_stock) AND (? IS NULL OR a.brand_id = ?)`;
-    const params = [all ? 1 : 0, q, q, q, q, q, q, low ? 1 : 0, brand, brand];
+        AND (? = 0 OR a.stock <= a.min_stock) AND (? IS NULL OR a.brand_id = ?)
+        AND (? = 0 OR a.id IN (SELECT pa.article_id FROM promotion_articles pa JOIN promotions p ON p.id = pa.promotion_id WHERE p.active = 1
+          AND (p.starts_on IS NULL OR p.starts_on <= date('now','localtime')) AND (p.ends_on IS NULL OR p.ends_on >= date('now','localtime'))))`;
+    const params = [all ? 1 : 0, q, q, q, q, q, q, low ? 1 : 0, brand, brand, onlyOffers ? 1 : 0];
     const limit = Math.min(Math.max(Number(query.get('limit')) || 1000, 1), 5000);
     // El total real va en un encabezado: la pantalla avisa si se muestran menos de los que hay.
     res.setHeader('X-Total-Count', db.prepare(`SELECT COUNT(*) AS n FROM articles a LEFT JOIN brands b ON b.id = a.brand_id ${where}`).get(...params).n);
@@ -1249,6 +1254,13 @@ export function createApp(db, opts = {}) {
     const q = String(b.query ?? '').trim();
     if (q) { where.push('a.name LIKE ?'); args.push(`%${q}%`); }
     if (b.only_stock) where.push('a.stock > 0');
+    // Artículos puntuales: se aplica solo a los elegidos uno por uno.
+    if (b.article_ids !== undefined) {
+      const ids = [...new Set((Array.isArray(b.article_ids) ? b.article_ids : []).map((x) => Number(x)).filter((x) => Number.isInteger(x) && x > 0))];
+      if (!ids.length) throw bad('Elegí al menos un artículo');
+      if (ids.length > 2000) throw bad('Demasiados artículos (máximo 2000)');
+      where.push(`a.id IN (${ids.map(() => '?').join(',')})`); args.push(...ids);
+    }
     const arts = db.prepare(`SELECT a.id, a.name, a.size, a.color, a.price, a.cost, br.name AS brand FROM articles a LEFT JOIN brands br ON br.id = a.brand_id
       WHERE ${where.join(' AND ')} ORDER BY br.name, a.name, a.size`).all(...args);
     const calc = (old) => Math.max(0, mode === 'percent' ? old * (1 + value / 100) : old + value);
