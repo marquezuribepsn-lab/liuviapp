@@ -4,6 +4,10 @@ import { randomBytes, scryptSync, timingSafeEqual, createHash } from 'node:crypt
 export const PERMISSIONS = [
   { key: 'ventas.cobrar', label: 'Vender y cobrar', group: 'Ventas' },
   { key: 'ventas.anular', label: 'Anular ventas', group: 'Ventas' },
+  { key: 'clientes.ver', label: 'Ver clientes, su historial y su cuenta corriente', group: 'Clientes' },
+  { key: 'clientes.editar', label: 'Crear y editar clientes', group: 'Clientes' },
+  { key: 'clientes.cuenta', label: 'Cargar saldo o señas y cobrar deudas de clientes', group: 'Clientes' },
+  { key: 'clientes.fiar', label: 'Vender a cuenta (dejar al cliente debiendo)', group: 'Clientes' },
   { key: 'articulos.ver', label: 'Ver artículos', group: 'Artículos' },
   { key: 'articulos.editar', label: 'Crear, editar y dar de baja artículos', group: 'Artículos' },
   { key: 'costos.ver', label: 'Ver costos y ganancias', group: 'Artículos' },
@@ -20,7 +24,7 @@ export const ALL_PERMISSIONS = PERMISSIONS.map((p) => p.key);
 
 export const DEFAULT_ROLES = [
   { name: 'Administrador', is_admin: 1, permissions: ALL_PERMISSIONS },
-  { name: 'Vendedor', is_admin: 0, permissions: ['ventas.cobrar', 'articulos.ver', 'stock.ver'] },
+  { name: 'Vendedor', is_admin: 0, permissions: ['ventas.cobrar', 'clientes.ver', 'clientes.editar', 'clientes.cuenta', 'articulos.ver', 'stock.ver'] },
 ];
 
 export const MIN_PASSWORD = 8;
