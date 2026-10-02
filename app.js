@@ -284,7 +284,7 @@ export function createApp(db, opts = {}) {
   // Limpiar el stock completo. Es irreversible: la pantalla pide dos confirmaciones y acá se exige la palabra LIMPIAR.
   // Si hay carpeta de copias configurada, primero se hace una copia y, si falla, no se toca nada.
   route('GET', '/api/stock/clear/preview', 'stock.limpiar', () => {
-    const sold = '(SELECT article_id FROM sale_items UNION SELECT article_id FROM layaway_items)';
+    const sold = '(SELECT article_id FROM sale_items UNION SELECT article_id FROM layaway_items UNION SELECT article_id FROM purchase_items UNION SELECT article_id FROM price_changes)';
     const r = db.prepare(`SELECT COUNT(*) AS total, COALESCE(SUM(active),0) AS active, COALESCE(SUM(CASE WHEN active = 1 THEN stock ELSE 0 END),0) AS units,
       COALESCE(SUM(CASE WHEN id IN ${sold} THEN 1 ELSE 0 END),0) AS with_sales FROM articles`).get();
     return { ...r, deletable: r.total - r.with_sales, backup: !!backups.dirOf() };
@@ -300,7 +300,7 @@ export function createApp(db, opts = {}) {
       catch (e) { throw new HttpError(500, `No se limpió nada: no se pudo hacer la copia de seguridad previa (${e.message}). Revisá la pestaña Copias.`); }
     }
     return tx(db, () => {
-      const sold = 'SELECT article_id FROM sale_items UNION SELECT article_id FROM layaway_items';
+      const sold = 'SELECT article_id FROM sale_items UNION SELECT article_id FROM layaway_items UNION SELECT article_id FROM purchase_items UNION SELECT article_id FROM price_changes';
       const withStock = db.prepare('SELECT id, stock FROM articles WHERE stock <> 0').all();
       const units = withStock.reduce((s, a) => s + a.stock, 0);
       for (const a of withStock) moveStock(a.id, -a.stock, 'limpieza', null, user.id); // queda registrado en los movimientos
@@ -948,6 +948,100 @@ export function createApp(db, opts = {}) {
   });
 
 
+  // Proveedores y compras: cada compra suma stock; lo que no se paga en el momento queda como deuda con el proveedor.
+  const SUPPLIER_LIST = `
+    SELECT s.*, COALESCE((SELECT SUM(amount) FROM supplier_movements WHERE supplier_id=s.id),0) AS owed,
+      (SELECT COUNT(*) FROM purchases WHERE supplier_id=s.id) AS purchases_count,
+      COALESCE((SELECT SUM(total) FROM purchases WHERE supplier_id=s.id),0) AS purchases_total,
+      (SELECT MAX(bought_at) FROM purchases WHERE supplier_id=s.id) AS last_purchase
+    FROM suppliers s`;
+  const supplierOwed = (id) => round2(db.prepare('SELECT COALESCE(SUM(amount),0) AS b FROM supplier_movements WHERE supplier_id=?').get(id).b);
+  const supplierRow = (r) => ({ ...r, owed: round2(r.owed), purchases_total: round2(r.purchases_total) });
+  function supplierFields(b, cur = {}) {
+    const name = String(b.name ?? cur.name ?? '').trim();
+    if (!name) throw bad('El nombre del proveedor es obligatorio');
+    const t = (k, max) => String(b[k] ?? cur[k] ?? '').trim().slice(0, max);
+    return { name: name.slice(0, 100), phone: t('phone', 40), email: t('email', 100), note: t('note', 300) };
+  }
+  route('GET', '/api/suppliers', 'proveedores.ver', ({ query }) => {
+    const q = `%${(query.get('q') || '').trim()}%`;
+    return db.prepare(`${SUPPLIER_LIST} WHERE (? OR s.active=1) AND (s.name LIKE ? OR s.phone LIKE ?) ORDER BY s.name COLLATE NOCASE LIMIT 500`)
+      .all(query.get('all') === '1' ? 1 : 0, q, q).map(supplierRow);
+  });
+  route('GET', '/api/suppliers/:id', 'proveedores.ver', ({ params }) => {
+    const s = db.prepare(`${SUPPLIER_LIST} WHERE s.id=?`).get(params.id);
+    if (!s) throw new HttpError(404, 'Proveedor no encontrado');
+    const movements = db.prepare(`SELECT m.*, u.name AS user_name FROM supplier_movements m LEFT JOIN users u ON u.id=m.user_id WHERE m.supplier_id=? ORDER BY m.id DESC LIMIT 100`).all(s.id).map((r) => ({ ...r }));
+    const purchases = db.prepare('SELECT * FROM purchases WHERE supplier_id=? ORDER BY id DESC LIMIT 50').all(s.id)
+      .map((p) => ({ ...p, items: db.prepare('SELECT article_id, name, qty, cost FROM purchase_items WHERE purchase_id=?').all(p.id).map((i) => ({ ...i })) }));
+    return { ...supplierRow(s), movements, purchases };
+  });
+  route('POST', '/api/suppliers', 'proveedores.editar', ({ body }) => {
+    const f = supplierFields(body);
+    if (db.prepare('SELECT 1 FROM suppliers WHERE active=1 AND name=? COLLATE NOCASE').get(f.name)) throw new HttpError(409, 'Ya hay un proveedor con ese nombre');
+    const { lastInsertRowid: id } = db.prepare('INSERT INTO suppliers (name,phone,email,note) VALUES (?,?,?,?)').run(f.name, f.phone, f.email, f.note);
+    return { status: 201, data: supplierRow(db.prepare(`${SUPPLIER_LIST} WHERE s.id=?`).get(id)) };
+  });
+  route('PUT', '/api/suppliers/:id', 'proveedores.editar', ({ params, body }) => {
+    const cur = db.prepare('SELECT * FROM suppliers WHERE id=?').get(params.id);
+    if (!cur) throw new HttpError(404, 'Proveedor no encontrado');
+    const f = supplierFields(body, cur);
+    const active = body.active === undefined ? cur.active : (body.active ? 1 : 0);
+    if (active && db.prepare('SELECT 1 FROM suppliers WHERE active=1 AND name=? COLLATE NOCASE AND id<>?').get(f.name, cur.id)) throw new HttpError(409, 'Ya hay un proveedor con ese nombre');
+    db.prepare('UPDATE suppliers SET name=?,phone=?,email=?,note=?,active=? WHERE id=?').run(f.name, f.phone, f.email, f.note, active, cur.id);
+    return supplierRow(db.prepare(`${SUPPLIER_LIST} WHERE s.id=?`).get(cur.id));
+  });
+  // Pago (parcial o total) de la deuda; si sale de la caja, queda como egreso del día.
+  function paySupplier(s, { amount, from_cash, method, concept }, user, purchaseId = null) {
+    amount = round2(amount);
+    method = method || 'efectivo';
+    if (from_cash) {
+      if (!METHODS.includes(method)) throw bad('Medio de pago inválido');
+      const session = requireSession();
+      db.prepare('INSERT INTO cash_movements (session_id,type,method,amount,concept,user_id) VALUES (?,?,?,?,?,?)')
+        .run(session.id, 'egreso', method, amount, `${concept} · ${s.name}`, user.id);
+    }
+    db.prepare('INSERT INTO supplier_movements (supplier_id,amount,concept,method,purchase_id,from_cash,user_id) VALUES (?,?,?,?,?,?,?)')
+      .run(s.id, -amount, concept, String(method).slice(0, 30), purchaseId, from_cash ? 1 : 0, user.id);
+  }
+  route('POST', '/api/suppliers/:id/payment', 'proveedores.editar', ({ params, body, user }) => tx(db, () => {
+    const s = db.prepare('SELECT * FROM suppliers WHERE id=? AND active=1').get(params.id);
+    if (!s) throw new HttpError(404, 'Proveedor no encontrado');
+    const amount = round2(num(body.amount, 'Monto'));
+    if (amount <= 0) throw bad('El monto debe ser mayor a 0');
+    if (amount > supplierOwed(s.id) + 0.004) throw bad('Es más de lo que se le debe a este proveedor');
+    paySupplier(s, { amount, from_cash: !!body.from_cash, method: body.method, concept: String(body.concept || 'Pago a proveedor').trim().slice(0, 100) || 'Pago a proveedor' }, user);
+    return { status: 201, data: { owed: supplierOwed(s.id) } };
+  }));
+  route('POST', '/api/purchases', 'proveedores.editar', ({ body, user }) => tx(db, () => {
+    const s = db.prepare('SELECT * FROM suppliers WHERE id=? AND active=1').get(body.supplier_id);
+    if (!s) throw new HttpError(404, 'Proveedor no encontrado');
+    const items = Array.isArray(body.items) ? body.items : [];
+    if (!items.length) throw bad('La compra no tiene artículos');
+    const day = body.date ? String(body.date) : new Date().toLocaleDateString('sv-SE');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw bad('Fecha inválida');
+    const lines = items.map((it) => {
+      const a = db.prepare('SELECT id, name, size, color, cost FROM articles WHERE id=? AND active=1').get(it.article_id);
+      if (!a) throw new HttpError(404, `Artículo ${it.article_id} no encontrado`);
+      return { a, qty: num(it.qty, 'Cantidad', { min: 1, int: true }), cost: round2(num(it.cost ?? a.cost, 'Costo')) };
+    });
+    const total = round2(lines.reduce((sum, l) => sum + l.qty * l.cost, 0));
+    const paid = round2(num(body.paid_amount ?? 0, 'Monto pagado'));
+    if (paid < 0 || paid > total + 0.004) throw bad('Lo pagado no puede ser mayor al total de la compra');
+    const { lastInsertRowid: id } = db.prepare('INSERT INTO purchases (supplier_id,invoice,bought_at,total,note,user_id) VALUES (?,?,?,?,?,?)')
+      .run(s.id, String(body.invoice ?? '').trim().slice(0, 40), day, total, String(body.note ?? '').trim().slice(0, 200), user.id);
+    for (const l of lines) {
+      const label = [l.a.name, l.a.size && `Talle ${l.a.size}`, l.a.color].filter(Boolean).join(' · ');
+      db.prepare('INSERT INTO purchase_items (purchase_id,article_id,name,qty,cost) VALUES (?,?,?,?,?)').run(id, l.a.id, label, l.qty, l.cost);
+      moveStock(l.a.id, l.qty, 'compra', null, user.id);
+      if (body.update_cost) db.prepare('UPDATE articles SET cost=? WHERE id=?').run(l.cost, l.a.id);
+    }
+    db.prepare('INSERT INTO supplier_movements (supplier_id,amount,concept,purchase_id,user_id) VALUES (?,?,?,?,?)')
+      .run(s.id, total, `Compra #${id}${body.invoice ? ` · ${String(body.invoice).trim().slice(0, 40)}` : ''}`, id, user.id);
+    if (paid > 0) paySupplier(s, { amount: paid, from_cash: !!body.from_cash, method: body.method, concept: `Pago de la compra #${id}` }, user, id);
+    return { status: 201, data: { id, total, owed: supplierOwed(s.id) } };
+  }));
+
   // Cambio masivo de precios (por marca, categoría, etc.) con vista previa y posibilidad de deshacer la última tanda.
   const ROUNDINGS = [0, 1, 10, 50, 100, 500, 1000];
   const SIGN = { percent: '%', amount: '$' };
@@ -1017,9 +1111,9 @@ export function createApp(db, opts = {}) {
     if ((new Date(to) - new Date(from)) / 86_400_000 > 3660) throw bad('El período es demasiado largo (máximo 10 años)');
     return buildReport(db, kind, { from, to }, can);
   };
-  route('GET', '/api/reports', ['estadisticas.ver', 'caja.ver', 'stock.ver', 'clientes.ver'], ({ can }) => allowedReports(can).map(({ kind, label, range }) => ({ kind, label, range })));
-  route('GET', '/api/reports/:kind', ['estadisticas.ver', 'caja.ver', 'stock.ver', 'clientes.ver'], ({ params, query, can }) => reportFor(params.kind, query, can));
-  route('GET', '/api/reports/:kind/xlsx', ['estadisticas.ver', 'caja.ver', 'stock.ver', 'clientes.ver'], ({ params, query, can }) => {
+  route('GET', '/api/reports', ['estadisticas.ver', 'caja.ver', 'stock.ver', 'clientes.ver', 'proveedores.ver'], ({ can }) => allowedReports(can).map(({ kind, label, range }) => ({ kind, label, range })));
+  route('GET', '/api/reports/:kind', ['estadisticas.ver', 'caja.ver', 'stock.ver', 'clientes.ver', 'proveedores.ver'], ({ params, query, can }) => reportFor(params.kind, query, can));
+  route('GET', '/api/reports/:kind/xlsx', ['estadisticas.ver', 'caja.ver', 'stock.ver', 'clientes.ver', 'proveedores.ver'], ({ params, query, can }) => {
     const rep = reportFor(params.kind, query, can);
     const stamp = rep.kind + (REPORTS.find((r) => r.kind === rep.kind).range ? `-${query.get('from') || ''}${query.get('to') && query.get('to') !== query.get('from') ? '_a_' + query.get('to') : ''}` : `-${new Date().toLocaleDateString('sv-SE')}`);
     return { raw: buildXlsx([reportSheet(rep)]), filename: `liuvi-${stamp.replace(/[^\w.-]/g, '')}.xlsx`, type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' };
@@ -1073,6 +1167,10 @@ export function createApp(db, opts = {}) {
         count: open.length,
         pending: round2(open.reduce((a, l) => a + Math.max(0, l.remaining), 0)),
       };
+    }
+    if (can('proveedores.ver')) {
+      const owing = db.prepare(`${SUPPLIER_LIST} WHERE s.active = 1`).all().filter((x) => x.owed > 0.004);
+      out.suppliers = { count: owing.length, total: round2(owing.reduce((a, x) => a + x.owed, 0)) };
     }
     if (can('sistema.copias')) {
       const b = backups.status();

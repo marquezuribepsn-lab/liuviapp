@@ -58,8 +58,8 @@ const articleLabel = (a) => [a.brand, a.name, a.size && `Talle ${a.size}`, a.col
 
 // ---------- Pestañas ----------
 let currentTab = 'venta';
-const loaders = { inicio: loadDashboard, reportes: loadReports, venta: loadCash, clientes: loadCustomers, etiquetas: loadPrintTab, articulos: loadArticles, stock: loadStock, stats: loadStats, usuarios: loadUsers, copias: loadBackup };
-const TAB_PERMS = { inicio: ['estadisticas.ver', 'caja.ver'], venta: ['ventas.cobrar', 'caja.ver', 'caja.operar'], clientes: ['clientes.ver'], articulos: ['articulos.ver'], etiquetas: ['articulos.ver'], stock: ['stock.ver'], stats: ['estadisticas.ver'], reportes: ['estadisticas.ver', 'caja.ver', 'stock.ver', 'clientes.ver'], usuarios: ['usuarios.admin'], copias: ['sistema.copias'] };
+const loaders = { inicio: loadDashboard, proveedores: loadSuppliers, reportes: loadReports, venta: loadCash, clientes: loadCustomers, etiquetas: loadPrintTab, articulos: loadArticles, stock: loadStock, stats: loadStats, usuarios: loadUsers, copias: loadBackup };
+const TAB_PERMS = { inicio: ['estadisticas.ver', 'caja.ver'], venta: ['ventas.cobrar', 'caja.ver', 'caja.operar'], clientes: ['clientes.ver'], articulos: ['articulos.ver'], etiquetas: ['articulos.ver'], stock: ['stock.ver'], proveedores: ['proveedores.ver'], stats: ['estadisticas.ver'], reportes: ['estadisticas.ver', 'caja.ver', 'stock.ver', 'clientes.ver'], usuarios: ['usuarios.admin'], copias: ['sistema.copias'] };
 function showTab(name) {
   currentTab = name;
   $$('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
@@ -1171,6 +1171,7 @@ async function loadDashboard() {
   if (d.cash?.open) kpis.push(['Efectivo en caja', money(d.cash.expected_cash), `abierta ${time(d.cash.opened_at)}`]);
   if (d.lowStock) kpis.push(['Stock bajo', d.lowStock.count, 'artículos']);
   if (d.debts) kpis.push(['Te deben', money(d.debts.total), `${d.debts.count} cliente${d.debts.count === 1 ? '' : 's'}`]);
+  if (d.suppliers) kpis.push(['Le debés a proveedores', money(d.suppliers.total), `${d.suppliers.count} proveedor${d.suppliers.count === 1 ? '' : 'es'}`]);
   if (d.layaways) kpis.push(['Señas abiertas', d.layaways.count, d.layaways.count ? `faltan cobrar ${money(d.layaways.pending)}` : '']);
   $('#dashKpis').innerHTML = kpis.map(([k, v, sub]) => `<div class="kpi"><span>${k}</span><b>${v}</b>${sub ? `<small>${esc(String(sub))}</small>` : ''}</div>`).join('');
   $('#dashWeekCard').hidden = $('#dashTopCard').hidden = !d.week;
@@ -1214,6 +1215,145 @@ $('#groupSeg').addEventListener('click', guard(async (e) => {
   $$('#groupSeg button').forEach((b) => b.classList.toggle('active', b === e.target));
   await loadStats();
 }));
+
+// ---------- Proveedores y compras ----------
+const owedHtml = (n) => (n > 0.004 ? `<b class="neg">${money(n)}</b>` : '<span class="muted">al día</span>');
+async function loadSuppliers() {
+  const q = encodeURIComponent($('#supSearch').value.trim());
+  let rows = await api('GET', `/suppliers?q=${q}`);
+  if ($('#supDebt').checked) rows = rows.filter((s) => s.owed > 0.004);
+  $('#supTable tbody').innerHTML = rows.map((s) => `<tr data-sid="${s.id}" style="cursor:pointer"><td><b>${esc(s.name)}</b></td><td>${esc(s.phone || '—')}</td>
+    <td class="num">${s.purchases_count}</td><td class="num">${money(s.purchases_total)}</td><td>${owedHtml(s.owed)}</td><td>${esc(s.last_purchase || '—')}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Todavía no cargaste proveedores</td></tr>';
+  const owed = rows.reduce((t, s) => t + Math.max(0, s.owed), 0);
+  $('#supNote').textContent = `${rows.length} proveedor(es)${owed > 0.004 ? ` · Les debés ${money(owed)}` : ''}`;
+  const edit = can('proveedores.editar');
+  $('#supNew').hidden = $('#supBuy').hidden = !edit;
+}
+$('#supSearch').addEventListener('input', debounce(guard(loadSuppliers)));
+$('#supDebt').addEventListener('change', guard(loadSuppliers));
+$('#supTable').addEventListener('click', guard(async (e) => { const tr = e.target.closest('tr[data-sid]'); if (tr) await openSupplierDetail(Number(tr.dataset.sid)); }));
+let editingSupplier = null;
+function openSupplierDialog(s) {
+  editingSupplier = s?.id ?? null;
+  const f = $('#supForm'); f.reset(); $('#supError').textContent = '';
+  $('#supTitle').textContent = s ? 'Editar proveedor' : 'Nuevo proveedor';
+  for (const k of ['name', 'phone', 'email', 'note']) f.elements[k].value = s?.[k] ?? '';
+  $('#supDialog').showModal(); f.elements.name.focus();
+}
+$('#supNew').addEventListener('click', () => openSupplierDialog());
+$('#supCancel').addEventListener('click', () => $('#supDialog').close());
+$('#supForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    const body = Object.fromEntries(new FormData(e.target));
+    const saved = editingSupplier ? await api('PUT', '/suppliers/' + editingSupplier, body) : await api('POST', '/suppliers', body);
+    $('#supDialog').close(); toast('Proveedor guardado');
+    await loadSuppliers(); if ($('#supDetail').open) await openSupplierDetail(saved.id);
+  } catch (err) { $('#supError').textContent = err.message; }
+});
+let supDetailId = null;
+async function openSupplierDetail(id) {
+  const s = await api('GET', '/suppliers/' + id);
+  supDetailId = id;
+  $('#sdName').textContent = s.name;
+  $('#sdInfo').textContent = [s.phone, s.email, s.note].filter(Boolean).join(' · ');
+  $('#sdKpis').innerHTML = [['Se le debe', money(Math.max(0, s.owed))], ['Compras', s.purchases_count], ['Total comprado', money(s.purchases_total)]].map(([k, v]) => `<div class="kpi"><span>${k}</span><b>${v}</b></div>`).join('');
+  const edit = can('proveedores.editar');
+  $('#sdActions').innerHTML = edit ? `<button class="primary" data-act="buy">Registrar compra</button><button class="ghost" data-act="pay" ${s.owed > 0.004 ? '' : 'disabled'}>Pagar deuda</button><button class="ghost" data-act="edit">Editar datos</button><button class="ghost" data-act="${s.active ? 'off' : 'on'}">${s.active ? 'Dar de baja' : 'Reactivar'}</button>` : '';
+  $('#sdActions').onclick = guard(async (e) => {
+    const act = e.target.dataset.act; if (!act) return;
+    if (act === 'edit') openSupplierDialog(s);
+    else if (act === 'buy') openBuyDialog(id);
+    else if (act === 'pay') openSupPay(s);
+    else if (await uiConfirm(act === 'off' ? `¿Dar de baja a ${s.name}? Su historial se conserva.` : `¿Reactivar a ${s.name}?`, { ok: 'Sí' })) {
+      await api('PUT', '/suppliers/' + id, { active: act === 'on' }); await loadSuppliers(); await openSupplierDetail(id);
+    }
+  });
+  $('#sdMovs tbody').innerHTML = s.movements.map((m) => `<tr><td>${esc(m.created_at.slice(0, 16))}</td><td>${esc(m.concept)}${m.from_cash ? ' <small class="muted">(de la caja)</small>' : ''}</td><td class="num ${m.amount < 0 ? 'pos' : 'neg'}">${m.amount < 0 ? '−' : '+'}${money(Math.abs(m.amount))}</td><td>${esc(m.user_name || '')}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">Sin movimientos</td></tr>';
+  $('#sdBuys tbody').innerHTML = s.purchases.map((p) => `<tr><td>${p.id}</td><td>${esc(p.bought_at)}</td><td>${esc(p.invoice || '—')}</td><td>${p.items.map((i) => `${i.qty}× ${esc(i.name)}`).join(', ')}</td><td class="num">${money(p.total)}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">Sin compras</td></tr>';
+  if (!$('#supDetail').open) $('#supDetail').showModal();
+}
+$('#sdClose').addEventListener('click', () => $('#supDetail').close());
+function openSupPay(s) {
+  const f = $('#supPayForm'); f.reset(); $('#spError').textContent = '';
+  $('#spName').textContent = s.name; $('#spOwed').textContent = `Se le debe ${money(s.owed)}.`;
+  f.elements.amount.value = s.owed; f.elements.amount.max = s.owed; $('#spMethodBox').hidden = true;
+  f.dataset.id = s.id; $('#supPayDialog').showModal(); f.elements.amount.select();
+}
+$('#spCash').addEventListener('change', () => { $('#spMethodBox').hidden = !$('#spCash').checked; });
+$('#spCancel').addEventListener('click', () => $('#supPayDialog').close());
+$('#supPayForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  try {
+    await api('POST', `/suppliers/${f.dataset.id}/payment`, { amount: Number(f.elements.amount.value), from_cash: f.elements.from_cash.checked, method: f.elements.method.value });
+    $('#supPayDialog').close(); toast('Pago registrado');
+    if (typeof refreshCash === 'function') refreshCash().catch(() => {});
+    await loadSuppliers(); await openSupplierDetail(Number(f.dataset.id));
+  } catch (err) { $('#spError').textContent = err.message; }
+});
+// Compra: arma la lista de artículos y, al confirmar, suma el stock y deja la deuda (o el pago) registrada.
+let buyLines = [];
+async function openBuyDialog(supplierId) {
+  const sups = await api('GET', '/suppliers');
+  if (!sups.length) return uiAlert('Primero cargá al menos un proveedor.');
+  $('#buySupplier').innerHTML = sups.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  if (supplierId) $('#buySupplier').value = supplierId;
+  $('#buyInvoice').value = ''; $('#buyDate').value = today(); $('#buySearch').value = ''; $('#buyResults').hidden = true;
+  $('#buyPaid').value = 0; $('#buyCash').checked = false; $('#buyMethodBox').hidden = true; $('#buyUpdateCost').checked = true; $('#buyError').textContent = '';
+  buyLines = []; renderBuy();
+  $('#buyDialog').showModal(); $('#buySearch').focus();
+}
+function renderBuy() {
+  $('#buyItems tbody').innerHTML = buyLines.map((l, i) => `<tr><td>${esc(articleLabel(l.a))}</td>
+    <td><input type="number" min="1" step="1" value="${l.qty}" data-i="${i}" data-f="qty" style="width:80px"></td>
+    <td><input type="number" min="0" step="0.01" value="${l.cost}" data-i="${i}" data-f="cost" style="width:110px"></td>
+    <td class="num">${money(l.qty * l.cost)}</td><td><button type="button" class="link" data-del="${i}">Quitar</button></td></tr>`).join('') || '<tr><td colspan="5" class="muted">Todavía no agregaste artículos</td></tr>';
+  const total = buyLines.reduce((t, l) => t + l.qty * l.cost, 0);
+  $('#buyTotal').textContent = money(total);
+  const paid = Number($('#buyPaid').value) || 0;
+  $('#buyOwe').textContent = total ? (paid >= total ? 'Queda pagada completa.' : `Queda a deber ${money(total - paid)} a este proveedor.`) : '';
+}
+$('#supBuy').addEventListener('click', guard(() => openBuyDialog()));
+$('#buyItems').addEventListener('input', (e) => {
+  const i = e.target.dataset.i; if (i === undefined) return;
+  buyLines[i][e.target.dataset.f] = Math.max(0, Number(e.target.value) || 0);
+  const tr = e.target.closest('tr'); tr.querySelector('td.num').textContent = money(buyLines[i].qty * buyLines[i].cost);
+  const total = buyLines.reduce((t, l) => t + l.qty * l.cost, 0); $('#buyTotal').textContent = money(total);
+  const paid = Number($('#buyPaid').value) || 0; $('#buyOwe').textContent = total ? (paid >= total ? 'Queda pagada completa.' : `Queda a deber ${money(total - paid)} a este proveedor.`) : '';
+});
+$('#buyItems').addEventListener('click', (e) => { if (e.target.dataset.del !== undefined) { buyLines.splice(Number(e.target.dataset.del), 1); renderBuy(); } });
+$('#buyPaid').addEventListener('input', renderBuy);
+$('#buyCash').addEventListener('change', () => { $('#buyMethodBox').hidden = !$('#buyCash').checked; });
+function addBuyArticle(a) {
+  const found = buyLines.find((l) => l.a.id === a.id);
+  if (found) found.qty++; else buyLines.push({ a, qty: 1, cost: a.cost ?? 0 });
+  $('#buySearch').value = ''; $('#buyResults').hidden = true; renderBuy(); $('#buySearch').focus();
+}
+let buyFound = [];
+$('#buySearch').addEventListener('input', debounce(guard(async () => {
+  const q = $('#buySearch').value.trim();
+  buyFound = q ? await api('GET', '/articles?limit=8&q=' + encodeURIComponent(q)) : [];
+  $('#buyResults').hidden = !buyFound.length;
+  $('#buyResults').innerHTML = `<table><tbody>${buyFound.map((a, i) => `<tr data-pick="${i}" style="cursor:pointer"><td>${esc(articleLabel(a))}</td><td class="num">stock ${a.stock}</td><td class="num">costo ${money(a.cost)}</td></tr>`).join('')}</tbody></table>`;
+})));
+$('#buySearch').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); if (buyFound[0]) addBuyArticle(buyFound[0]); } });
+$('#buyResults').addEventListener('click', (e) => { const tr = e.target.closest('tr[data-pick]'); if (tr) addBuyArticle(buyFound[Number(tr.dataset.pick)]); });
+$('#buyCancel').addEventListener('click', () => $('#buyDialog').close());
+$('#buyForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!buyLines.length) { $('#buyError').textContent = 'Agregá al menos un artículo'; return; }
+  try {
+    const r = await api('POST', '/purchases', {
+      supplier_id: Number($('#buySupplier').value), invoice: $('#buyInvoice').value, date: $('#buyDate').value, update_cost: $('#buyUpdateCost').checked,
+      items: buyLines.map((l) => ({ article_id: l.a.id, qty: l.qty, cost: l.cost })), paid_amount: Number($('#buyPaid').value) || 0,
+      from_cash: $('#buyCash').checked, method: $('#buyMethod').value,
+    });
+    $('#buyDialog').close(); toast(`Compra registrada (${money(r.total)}). Stock actualizado.`);
+    if (typeof refreshCash === 'function') refreshCash().catch(() => {});
+    await loadSuppliers(); if ($('#supDetail').open) await openSupplierDetail(Number($('#buySupplier').value));
+  } catch (err) { $('#buyError').textContent = err.message; }
+});
 
 // ---------- Reportes ----------
 let repLoaded = false, repData = null;

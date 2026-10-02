@@ -9,6 +9,8 @@ export const PERMISSIONS = [
   { key: 'clientes.editar', label: 'Crear y editar clientes', group: 'Clientes' },
   { key: 'clientes.cuenta', label: 'Cargar saldo o señas y cobrar deudas de clientes', group: 'Clientes' },
   { key: 'clientes.fiar', label: 'Vender a cuenta (dejar al cliente debiendo)', group: 'Clientes' },
+  { key: 'proveedores.ver', label: 'Ver proveedores, sus compras y lo que se les debe', group: 'Proveedores' },
+  { key: 'proveedores.editar', label: 'Cargar proveedores y compras (suma stock) y registrar pagos', group: 'Proveedores' },
   { key: 'articulos.ver', label: 'Ver artículos', group: 'Artículos' },
   { key: 'articulos.editar', label: 'Crear, editar y dar de baja artículos', group: 'Artículos' },
   { key: 'costos.ver', label: 'Ver costos y ganancias', group: 'Artículos' },
