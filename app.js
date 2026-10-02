@@ -43,10 +43,11 @@ function tx(db, fn) {
   finally { txDepth--; }
 }
 
-function num(v, name, { min = 0, int = false } = {}) {
+function num(v, name, { min = 0, max = 1e12, int = false } = {}) {
   const n = Number(v);
   if (v === '' || v === null || v === undefined || !Number.isFinite(n)) throw bad(`${name} inválido`);
   if (n < min) throw bad(`${name} no puede ser menor a ${min}`);
+  if (n > max) throw bad(`${name} es demasiado grande`); // evita desbordes en los totales
   if (int && !Number.isInteger(n)) throw bad(`${name} debe ser entero`);
   return n;
 }
@@ -1718,6 +1719,8 @@ export function createApp(db, opts = {}) {
     catch { throw bad('JSON inválido'); }
   }
 
+  // Con HOST=0.0.0.0 (acceso desde la red del local) se aceptan otras direcciones a propósito.
+  const lanMode = opts.lan ?? !['', '127.0.0.1', 'localhost', '::1'].includes(process.env.HOST || '');
   async function handleRequest(req, res) {
     const send = (status, data) => {
       if (res.headersSent) { try { res.end(); } catch { /* conexión cerrada */ } return; } // ya se había empezado a responder: no se puede escribir de nuevo
@@ -1725,9 +1728,16 @@ export function createApp(db, opts = {}) {
       res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(body);
     };
+    // Cabeceras de seguridad: nada de scripts de otros sitios, la página no se puede incrustar en otra y no se adivinan tipos de archivo.
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
     try {
       let url;
       try { url = new URL(req.url, 'http://localhost'); } catch { throw bad('Dirección inválida'); }
+      // Solo se atiende por localhost: así una página de internet no puede hablarle al sistema reasignando su dominio a esta PC (DNS rebinding).
+      if (!lanMode && req.headers.host && !/^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i.test(req.headers.host)) throw new HttpError(403, 'Dirección no permitida: abrí Liu Vi desde http://localhost:3000');
       if (url.pathname.startsWith('/api/')) {
         for (const r of routes) {
           if (r.method !== req.method) continue;
@@ -1777,6 +1787,8 @@ export function createApp(db, opts = {}) {
       res.end(body);
     } catch (e) {
       if (e instanceof HttpError) return send(e.status, { error: e.message, ...e.extra });
+      // Un dato que falta o llega con un tipo imposible (por ejemplo un artículo sin id) es un error del pedido, no del sistema.
+      if (e?.code === 'ERR_INVALID_ARG_TYPE' && /SQLite/i.test(e.message)) return send(400, { error: 'Faltan datos o son inválidos en el pedido' });
       console.error(e);
       send(500, { error: 'Error interno' });
     }

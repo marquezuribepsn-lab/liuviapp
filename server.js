@@ -21,7 +21,7 @@ if (!process.env.DB_PATH) {
 const db = openDb();
 clearSessionsIfRequired(db); // al abrir el programa hay que iniciar sesión (configurable por el administrador)
 let server;
-const app = createApp(db, { restart: () => relaunchServer({ appDir: APP_DIR, closeServer: () => server.close() }) });
+const app = createApp(db, { restart: () => relaunchServer({ appDir: APP_DIR, port, closeServer: () => server.close() }) });
 app.backups.start();
 app.updater.start();
 server = createServer(app);
