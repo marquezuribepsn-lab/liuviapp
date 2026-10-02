@@ -82,12 +82,25 @@ function updateChange() {
   const diff = Math.round((paid - total) * 100) / 100;
   $('#change').textContent = !cart.length ? '' : diff >= 0 ? `Vuelto: ${money(diff)}` : `Falta cobrar: ${money(-diff)}`;
 }
+// Sonido corto de confirmación (agudo = agregado, grave = error): se puede cobrar sin mirar la pantalla.
+let audioCtx = null;
+function beep(ok = true) {
+  try {
+    audioCtx ||= new AudioContext();
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.frequency.value = ok ? 1100 : 220; g.gain.value = 0.08;
+    o.connect(g); g.connect(audioCtx.destination); o.start(); o.stop(audioCtx.currentTime + (ok ? 0.08 : 0.25));
+  } catch { /* sin audio */ }
+}
 function addToCart(a) {
   const line = cart.find((l) => l.a.id === a.id);
   const qty = (line?.qty || 0) + 1;
-  if (qty > a.stock) return toast(`Sin stock suficiente de ${articleLabel(a)} (hay ${a.stock})`, true);
+  if (qty > a.stock) { beep(false); $('#lastScan').innerHTML = `<span class="neg">Sin stock suficiente de ${esc(articleLabel(a))} (hay ${a.stock})</span>`; return toast(`Sin stock suficiente de ${articleLabel(a)} (hay ${a.stock})`, true); }
   if (line) line.qty = qty; else cart.push({ a, qty: 1 });
   renderCart();
+  beep(true);
+  $('#lastScan').innerHTML = `✔ <b>${esc(articleLabel(a))}</b> · ${money(a.price)}${qty > 1 ? ` · ya van ${qty}` : ''}`;
+  return true;
 }
 $('#cart').addEventListener('click', (e) => {
   const q = e.target.dataset.q, rm = e.target.dataset.rm;
@@ -120,21 +133,47 @@ async function searchInto(box, q, onPick) {
 }
 const liveSearch = debounce(guard(() => searchInto($('#results'), $('#scan').value.trim(), (a) => { addToCart(a); $('#results').innerHTML = ''; $('#scan').value = ''; $('#scan').focus(); })));
 $('#scan').addEventListener('input', liveSearch);
-// El lector envía el código seguido de Enter.
-$('#scan').addEventListener('keydown', guard(async (e) => {
-  if (e.key !== 'Enter') return;
-  const code = e.target.value.trim();
+// Un código leído (con el lector o escrito a mano): primero se busca el código exacto; si no está, se busca como texto.
+async function scanCode(raw) {
+  const code = raw.trim();
   if (!code) return;
-  e.preventDefault();
   try {
     addToCart(await api('GET', '/articles/barcode/' + encodeURIComponent(code)));
-    e.target.value = ''; $('#results').innerHTML = '';
+    $('#scan').value = ''; $('#results').innerHTML = '';
   } catch {
-    const list = await searchInto($('#results'), code, () => {});
-    if (list.length === 1) { addToCart(list[0]); e.target.value = ''; $('#results').innerHTML = ''; }
-    else toast(list.length ? 'Elegí un artículo de la lista' : 'Código o artículo no encontrado', !list.length);
+    const list = await searchInto($('#results'), code, (a) => { addToCart(a); $('#results').innerHTML = ''; $('#scan').value = ''; $('#scan').focus(); });
+    if (list.length === 1) { addToCart(list[0]); $('#scan').value = ''; $('#results').innerHTML = ''; }
+    else if (list.length) toast('Elegí un artículo de la lista', false);
+    else { beep(false); $('#lastScan').innerHTML = `<span class="neg">No existe ningún artículo con el código «${esc(code)}»</span>`; toast('Código o artículo no encontrado', true); $('#scan').select(); }
   }
+  $('#scan').focus();
+}
+// El lector envía el código seguido de Enter (algunos, de Tab).
+$('#scan').addEventListener('keydown', guard(async (e) => {
+  if (e.key !== 'Enter' && !(e.key === 'Tab' && !e.shiftKey && e.target.value.trim())) return;
+  e.preventDefault();
+  await scanCode(e.target.value);
 }));
+// Si el lector escribe con el foco en otro campo (descuento, cliente, pagos…): una ráfaga rápida de teclas terminada en Enter
+// es un código, no un dato para ese campo. Se deshace lo escrito y se carga como código.
+let burst = null;
+document.addEventListener('keydown', (e) => {
+  const f = document.activeElement;
+  if (currentTab !== 'venta' || !f || f.id === 'scan' || f.tagName !== 'INPUT' || $('dialog[open]') || e.ctrlKey || e.metaKey || e.altKey) return;
+  const now = performance.now();
+  if (e.key.length === 1) {
+    burst = burst && burst.field === f && now - burst.last < 50 ? { ...burst, text: burst.text + e.key, last: now } : { field: f, prev: f.value, text: e.key, last: now };
+  } else if (e.key === 'Enter' && burst && burst.field === f && burst.text.length >= 6 && now - burst.last < 100) {
+    e.preventDefault();
+    f.value = burst.prev; f.dispatchEvent(new Event('input', { bubbles: true }));
+    const code = burst.text; burst = null;
+    guard(() => scanCode(code))();
+  } else burst = null;
+}, true);
+// Tras tocar un botón de la venta, el foco vuelve al campo de escaneo (así el lector siempre escribe ahí).
+$('#posBox').addEventListener('click', (e) => { if (e.target.closest('button') && !$('dialog[open]')) setTimeout(() => $('#scan').focus(), 0); });
+$('#scan').addEventListener('input', () => ($('#lastScan').textContent = ''));
+
 $('#charge').addEventListener('click', guard(async () => {
   if (!cart.length) throw new Error('La venta está vacía');
   if (!cash) throw new Error('Abrí la caja antes de vender');

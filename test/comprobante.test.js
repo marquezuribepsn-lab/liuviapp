@@ -18,3 +18,24 @@ test('la venta guarda y devuelve los datos del cliente (opcionales y acotados)',
     assert.equal(list[0].customer_name, '');
   } finally { t.close(); }
 });
+
+test('lector de códigos: el código se encuentra aunque venga en otras mayúsculas o sin ceros iniciales', async () => {
+  const t = await start();
+  try {
+    const mk = (o) => t.admin('POST', '/api/articles', { price: 1000, cost: 1, stock: 3, ...o });
+    await mk({ name: 'Remera', barcode: '7790001000011' });
+    await mk({ name: 'Short', barcode: 'ABC-123' });
+    await mk({ name: 'Top', barcode: '0123456789012' });
+    const get = async (c) => (await t.admin('GET', '/api/articles/barcode/' + encodeURIComponent(c)));
+    assert.equal((await get('7790001000011')).data.name, 'Remera');
+    assert.equal((await get('abc-123')).data.name, 'Short', 'bloqueo de mayúsculas del lector');
+    assert.equal((await get(' ABC-123 ')).data.name, 'Short');
+    assert.equal((await get('123456789012')).data.name, 'Top', 'UPC-A leído sin el cero inicial');
+    assert.equal((await get('999')).status, 404);
+    assert.equal((await get('0')).status, 404, 'el cero solo no coincide con todo');
+    // si dos artículos serían igual de válidos, no se adivina
+    await mk({ name: 'Top 2', barcode: '000123456789012' });
+    assert.equal((await get('123456789012')).status, 404);
+    assert.equal((await get('0123456789012')).data.name, 'Top', 'el exacto siempre gana');
+  } finally { t.close(); }
+});

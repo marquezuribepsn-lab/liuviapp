@@ -141,7 +141,13 @@ export function createApp(db, opts = {}) {
   });
 
   route('GET', '/api/articles/barcode/:code', ['articulos.ver', 'stock.ver'], ({ params, can }) => {
-    const a = db.prepare(`${ART} WHERE a.barcode = ? AND a.active = 1`).get(decodeURIComponent(params.code));
+    const code = decodeURIComponent(params.code).trim();
+    // Exacto; si no, sin distinguir mayúsculas (lectores con bloqueo de mayúsculas) y sin ceros iniciales (UPC-A 12 dígitos vs EAN-13).
+    const find = (where, ...args) => db.prepare(`${ART} WHERE ${where} AND a.active = 1 LIMIT 2`).all(...args);
+    let found = find('a.barcode = ?', code);
+    if (!found.length) found = find('a.barcode = ? COLLATE NOCASE', code);
+    if (!found.length && /^\d+$/.test(code)) found = find("ltrim(a.barcode, '0') = ltrim(?, '0') AND a.barcode GLOB '[0-9]*' AND ltrim(?, '0') != ''", code, code);
+    const a = found.length === 1 || (found.length && found[0].barcode === code) ? found[0] : null;
     if (!a) throw new HttpError(404, 'Código no encontrado');
     return maskCost(a, can);
   });
