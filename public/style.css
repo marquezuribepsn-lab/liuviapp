@@ -236,3 +236,8 @@ body.locked>footer{display:none}
 .gBtn:hover{background:#f6f9fe;border-color:#d2e3fc}
 .gFile{display:inline-block;padding:10px 16px;border:1px solid var(--line);border-radius:10px;cursor:pointer;background:var(--card);font-weight:600}
 .gFile:hover{border-color:var(--accent)}
+
+.timesGrid{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+.timesGrid input{width:142px;margin:0;text-align:center}
+#bkSched[hidden]{display:none}
+.rsPrevia{color:var(--muted);font-size:12px}

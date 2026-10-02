@@ -1,5 +1,6 @@
-import { readFileSync, existsSync, statSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { readFileSync, existsSync, statSync, writeFileSync, unlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { createHash, randomBytes } from 'node:crypto';
 import { join, extname, normalize, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createBackups } from './backup.js';
@@ -47,7 +48,7 @@ function num(v, name, { min = 0, int = false } = {}) {
 }
 
 export function createApp(db, opts = {}) {
-  const gdrive = createGoogleDrive(db, opts.google);
+  const gdrive = createGoogleDrive(db, { keep: () => backups.keepCount(), ...opts.google }); // en Drive se conservan tantas copias como en la carpeta
   const dbFile = db.prepare('PRAGMA database_list').get()?.file;
   const backups = createBackups(db, { gdrive, defaultDir: dbFile ? join(dirname(dbFile), 'copias') : null });
   const openSession = () => db.prepare('SELECT * FROM cash_sessions WHERE closed_at IS NULL').get();
@@ -1217,13 +1218,35 @@ export function createApp(db, opts = {}) {
   const BACKUP = 'sistema.copias';
   route('GET', '/api/backup', BACKUP, () => backups.status());
   route('PUT', '/api/backup', BACKUP, ({ body }) => {
-    try { backups.configure({ dir: body.dir, auto: body.auto, pc_name: body.pc_name }); } catch (e) { throw bad(e.message); }
+    try { backups.configure({ dir: body.dir, auto: body.auto, pc_name: body.pc_name, times: body.times, on_close: body.on_close, keep: body.keep }); } catch (e) { throw bad(e.message); }
     return backups.status();
   });
   route('POST', '/api/backup/run', BACKUP, async () => {
     try { backups.run('manual'); } catch (e) { throw bad(e.message); }
     await gdrive.idle(); // si hay Drive conectado, el resultado de la subida ya figura en el estado
     return backups.status();
+  });
+
+  // Restaurar una copia: reemplaza los datos actuales (antes se guarda una copia de lo que hay). Cierra todas las sesiones.
+  route('POST', '/api/backup/restore', BACKUP, async ({ body }) => {
+    if (importer.isRunning()) throw new HttpError(409, 'Hay una carga de Excel en curso. Esperá a que termine.');
+    if (String(body.confirm ?? '').trim().toUpperCase() !== 'RESTAURAR') throw bad('Para confirmar, escribí la palabra RESTAURAR');
+    let tmp = null;
+    try {
+      if (body.source === 'local') return backups.restoreLocal(String(body.name ?? ''));
+      tmp = join(tmpdir(), `liuvi-restaurar-${randomBytes(6).toString('hex')}.db`);
+      if (body.source === 'upload') {
+        const buf = Buffer.from(String(body.data ?? ''), 'base64');
+        if (!buf.length) throw bad('El archivo está vacío');
+        writeFileSync(tmp, buf);
+      } else if (body.source === 'drive') await gdrive.download(String(body.id ?? ''), tmp);
+      else throw bad('Elegí de dónde restaurar');
+      return backups.restoreFromFile(tmp);
+    } catch (e) { throw e instanceof HttpError ? e : bad(e.message); }
+    finally { if (tmp) { try { unlinkSync(tmp); } catch { /* no se llegó a crear */ } } }
+  });
+  route('GET', '/api/backup/drive-list', BACKUP, async () => {
+    try { return await gdrive.listRemote(); } catch (e) { throw bad(e.message); }
   });
 
   // Google Drive

@@ -27,9 +27,15 @@ export async function fakeGoogle() {
       const name = /name='([^']*)'/.exec(q)?.[1], parent = /'([^']*)' in parents/.exec(q)?.[1];
       let list = st.files.filter((f) => !f.trashed && (name === undefined || f.name === name) && (parent === undefined || f.parents?.includes(parent)));
       if (!name) list = list.sort((a, b) => b.n - a.n);
-      return json(200, { files: list.map((f) => ({ id: f.id })) });
+      return json(200, { files: list.map((f) => ({ id: f.id, name: f.name, size: String(f.size ?? 0), createdTime: new Date(1.7e12 + f.n * 1000).toISOString() })) });
     }
     if (url.pathname === '/drive/files' && req.method === 'POST') { const b = JSON.parse(raw); const f = { id: `f${++st.seq}`, n: st.seq, ...b }; st.files.push(f); return json(200, { id: f.id }); }
+    if (url.pathname.startsWith('/drive/files/') && req.method === 'GET') {
+      const f = st.files.find((x) => x.id === url.pathname.split('/').pop());
+      if (!f) return json(404, { error: { message: 'no existe' } });
+      if (url.searchParams.get('alt') === 'media') { res.writeHead(200, { 'Content-Type': 'application/octet-stream' }); return res.end(f.data || Buffer.alloc(0)); }
+      return json(200, { name: f.name, size: String(f.size ?? 0) });
+    }
     if (url.pathname.startsWith('/drive/files/') && req.method === 'DELETE') { st.files = st.files.filter((f) => f.id !== url.pathname.split('/').pop()); res.writeHead(204); return res.end(); }
     if (url.pathname === '/upload/files') {
       const b = JSON.parse(raw); const id = `u${++st.seq}`; st.uploads[id] = b;
@@ -37,7 +43,7 @@ export async function fakeGoogle() {
     }
     if (url.pathname.startsWith('/upload/session/')) {
       const id = url.pathname.split('/').pop(); const meta = st.uploads[id];
-      st.files.push({ id, n: ++st.seq, name: meta.name, parents: meta.parents, size: raw.length });
+      st.files.push({ id, n: ++st.seq, name: meta.name, parents: meta.parents, size: raw.length, data: raw });
       return json(200, { id });
     }
     json(404, {});

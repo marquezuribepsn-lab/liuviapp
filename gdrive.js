@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { readFileSync, existsSync, statSync, createReadStream } from 'node:fs';
+import { readFileSync, existsSync, statSync, createReadStream, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { hostname } from 'node:os';
 import { APP_DIR, getSetting, setSetting } from './db.js';
@@ -179,7 +179,8 @@ export function createGoogleDrive(db, { base, keep = KEEP_REMOTE, clientFile = j
     const headers = await auth();
     const query = `'${q(parent)}' in parents and trashed=false`;
     const list = await (await call(`${ep.api}/files?${new URLSearchParams({ q: query, orderBy: 'createdTime desc', fields: 'files(id)', pageSize: '200' })}`, { headers })).json();
-    for (const f of (list.files || []).slice(keep)) { try { await call(`${ep.api}/files/${f.id}`, { method: 'DELETE', headers }); } catch { /* se borra la próxima vez */ } }
+    const limit = typeof keep === 'function' ? keep() : keep;
+    for (const f of (list.files || []).slice(limit)) { try { await call(`${ep.api}/files/${f.id}`, { method: 'DELETE', headers }); } catch { /* se borra la próxima vez */ } }
   }
 
   async function upload(file) {
@@ -201,6 +202,31 @@ export function createGoogleDrive(db, { base, keep = KEEP_REMOTE, clientFile = j
     }
   }
 
+  // Copias que hay en el Drive (de todas las computadoras que usan esta misma cuenta), para restaurar desde la nube.
+  async function listRemote() {
+    if (!connected()) throw new Error('Google Drive no está conectado');
+    const headers = await auth();
+    const find = async (query, fields, extra = {}) => (await (await call(`${ep.api}/files?${new URLSearchParams({ q: query, fields, pageSize: '100', ...extra })}`, { headers })).json()).files || [];
+    const roots = await find(`name='${q(ROOT_NAME)}' and mimeType='application/vnd.google-apps.folder' and trashed=false`, 'files(id)');
+    if (!roots[0]) return [];
+    const out = [];
+    for (const f of await find(`'${q(roots[0].id)}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`, 'files(id,name)')) {
+      for (const file of await find(`'${q(f.id)}' in parents and trashed=false`, 'files(id,name,size,createdTime)', { orderBy: 'createdTime desc', pageSize: '40' })) {
+        if (/^liuvi-(backup|antes-de-restaurar)-.*\.db$/.test(file.name)) out.push({ id: file.id, name: file.name, size: Number(file.size) || 0, created_at: file.createdTime, pc: f.name });
+      }
+    }
+    return out.sort((a, b) => (a.created_at < b.created_at ? 1 : -1)).slice(0, 80);
+  }
+  async function download(id, dest) {
+    if (!connected()) throw new Error('Google Drive no está conectado');
+    const headers = await auth();
+    const meta = await (await call(`${ep.api}/files/${encodeURIComponent(id)}?fields=name,size`, { headers })).json();
+    if (!/^liuvi-(backup|antes-de-restaurar)-.*\.db$/.test(meta.name || '')) throw new Error('Ese archivo no es una copia de Liu Vi');
+    if (Number(meta.size) > 200 * 1024 * 1024) throw new Error('La copia es demasiado grande para restaurarla desde acá');
+    const res = await call(`${ep.api}/files/${encodeURIComponent(id)}?alt=media`, { headers }, 600_000);
+    writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
+  }
+
   // Las subidas van de a una y nunca frenan lo que está haciendo el usuario.
   function enqueue(file) {
     if (!connected()) return Promise.resolve();
@@ -217,5 +243,5 @@ export function createGoogleDrive(db, { base, keep = KEEP_REMOTE, clientFile = j
     return c;
   }
 
-  return { status, saveCredentials, authUrl, finish, isPopup, enqueue, idle: () => chain, disconnect, connected, pcName, STRIP_KEYS: KEYS };
+  return { status, saveCredentials, authUrl, finish, isPopup, listRemote, download, enqueue, idle: () => chain, disconnect, connected, pcName, STRIP_KEYS: KEYS };
 }
