@@ -638,7 +638,15 @@ async function loadCash() {
   const sales = await api('GET', '/sales?date=' + day);
   $('#salesTable tbody').innerHTML = sales.map((s) => `<tr style="${s.voided ? 'opacity:.5;text-decoration:line-through' : ''}"><td>${compNumber(s)}</td><td>${time(s.created_at)}</td><td>${esc(s.seller || '')}${s.customer_name ? `<br><small class="muted">Cliente: ${esc(s.customer_name)}</small>` : ''}</td>
     <td>${s.items.map((i) => `${i.qty}× ${esc(i.name)}`).join('<br>')}</td><td>${s.payments.map((p) => `${p.method} ${money(p.amount)}`).join('<br>')}</td>
-    <td class="num">${money(s.total)}</td><td><button class="link" data-reprint="${s.id}">Imprimir</button>${s.voided ? 'Anulada' : cash && day === today() && can('ventas.anular') ? `<button class="link" data-void="${s.id}">Anular</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">Sin ventas en esta fecha</td></tr>';
+    <td class="num">${money(s.total)}${s.returned_value ? `<br><small class="muted">devuelto ${money(s.returned_value)}</small>` : ''}</td><td><button class="link" data-reprint="${s.id}">Imprimir</button>${s.voided ? 'Anulada' : [
+      cash && can('ventas.devolver') && s.items.some((i) => i.qty > i.returned) ? `<button class="link" data-ret="${s.id}">Cambio / devolución</button>` : '',
+      cash && day === today() && can('ventas.anular') && !s.returned_value && !s.exchange_amount ? `<button class="link" data-void="${s.id}">Anular</button>` : ''].join('')}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">Sin ventas en esta fecha</td></tr>';
+  const rets = await api('GET', '/returns?date=' + day);
+  $('#returnsBox').hidden = !rets.length;
+  window._rets = rets;
+  $('#retTable tbody').innerHTML = rets.map((r) => `<tr><td>${String(r.id).padStart(5, '0')}</td><td>${time(r.created_at)}</td><td><b>${r.kind === 'cambio' ? 'Cambio' : 'Devolución'}</b><br><small class="muted">venta ${compNumber({ id: r.sale_id })}</small></td>
+    <td>${r.items.map((i) => `↩ ${i.qty}× ${esc(i.name)}`).join('<br>')}${r.new_items.length ? '<br>' + r.new_items.map((i) => `➜ ${i.qty}× ${esc(i.name)}`).join('<br>') : ''}</td>
+    <td class="num">${money(r.value)}</td><td>${returnResolution(r)}</td><td><button class="link" data-rprint="${r.id}">Imprimir</button></td></tr>`).join('');
   $('#sessionsBox').hidden = !ver;
   if (ver) {
     const sessions = await api('GET', '/cash/sessions');
@@ -669,16 +677,129 @@ $('#closeForm').addEventListener('submit', guard(async (e) => {
   alert(`Caja cerrada.\nEsperado: ${money(r.expected_cash)}\nContado: ${money(r.counted_cash)}\nDiferencia: ${money(r.difference)}`);
   await loadCash();
 }));
+$('#retTable').addEventListener('click', (e) => { const r = window._rets.find((x) => x.id == e.target.dataset.rprint); if (r) printReturn(r); });
 $('#salesTable').addEventListener('click', guard(async (e) => {
   if (e.target.dataset.reprint) {
     const s = (await api('GET', '/sales?date=' + ($('#salesDate').value || today()))).find((x) => x.id == e.target.dataset.reprint);
     if (s) printTicket(s);
     return;
   }
+  if (e.target.dataset.ret) {
+    const s = (await api('GET', '/sales?date=' + ($('#salesDate').value || today()))).find((x) => x.id == e.target.dataset.ret);
+    if (s) openReturnDialog(s);
+    return;
+  }
   if (e.target.dataset.void && confirm('¿Anular la venta? Se devuelve el stock y se registra el egreso en caja.')) {
     await api('POST', `/sales/${e.target.dataset.void}/void`); toast('Venta anulada'); await loadCash();
   }
 }));
+
+// ---------- Cambios y devoluciones ----------
+const returnResolution = (r) => [
+  r.exchange_amount ? `Cubre ${money(r.exchange_amount)} de la prenda nueva` : '',
+  r.new_sale && r.new_sale.total - r.exchange_amount > 0 ? `Pagó ${money(r.new_sale.total - r.exchange_amount)} de diferencia` : '',
+  r.refund_cash ? `Se devolvieron ${money(r.refund_cash)} (${r.refund_method})` : '',
+  r.credit_amount ? `${money(r.credit_amount)} a saldo a favor` : '',
+].filter(Boolean).join('<br>') || '—';
+let ret = null; // { sale, back: {saleItemId: qty}, fresh: [{a, qty}], customer }
+const r2 = (n) => Math.round(n * 100) / 100;
+function retTotals() {
+  const { sale } = ret;
+  const ratio = sale.subtotal ? (sale.total - (sale.exchange_amount || 0)) / sale.subtotal : 1;
+  let R = 0;
+  for (const i of sale.items) R += r2((ret.back[i.id] || 0) * i.price * ratio);
+  R = Math.min(r2(R), r2(sale.total - (sale.exchange_amount || 0) - (sale.returned_value || 0)));
+  const N = r2(ret.fresh.reduce((s, l) => s + l.a.price * l.qty, 0));
+  const exchange = Math.min(R, N);
+  return { R, N, exchange, due: r2(N - exchange), left: r2(R - exchange), ratio };
+}
+function openReturnDialog(sale) {
+  ret = { sale, back: {}, fresh: [], customer: sale.customer_id ? { id: sale.customer_id, name: sale.customer_name } : null };
+  $('#retTitle').textContent = `Cambio o devolución · venta ${compNumber(sale)}`;
+  $('#retInfo').textContent = `${when(sale)}${sale.customer_name ? ` · Cliente: ${sale.customer_name}` : ''} · Total ${money(sale.total)}`;
+  $('#retScan').value = ''; $('#retResults').innerHTML = ''; $('#retNote').value = ''; $('#retError').textContent = ''; $('#retLeft').value = 'efectivo';
+  $('#retCust').value = ''; $('#retCustResults').innerHTML = '';
+  $$('#retPayBox [data-rp]').forEach((i) => (i.value = '')); $('#retAcc').value = '';
+  $('#retAccWrap').hidden = !ret.customer;
+  renderReturn();
+  $('#retDialog').showModal();
+}
+function renderReturn() {
+  const { sale } = ret, t = retTotals();
+  $('#retItems tbody').innerHTML = sale.items.map((i) => {
+    const max = i.qty - i.returned;
+    return `<tr><td>${esc(i.name)}</td><td class="num">${i.qty}</td><td class="num">${i.returned || '—'}</td>
+      <td>${max ? `<input type="number" min="0" max="${max}" value="${ret.back[i.id] || 0}" data-rb="${i.id}" data-max="${max}" style="width:70px">` : '<span class="muted">—</span>'}</td>
+      <td class="num">${money(r2((ret.back[i.id] || 0) * i.price * t.ratio))}</td></tr>`;
+  }).join('');
+  $('#retNew tbody').innerHTML = ret.fresh.map((l, k) => `<tr><td>${esc(articleLabel(l.a))}</td>
+    <td><button type="button" class="link" data-rq="${k}:-1">−</button> ${l.qty} <button type="button" class="link" data-rq="${k}:1">+</button></td>
+    <td class="num">${money(l.a.price * l.qty)}</td><td><button type="button" class="link" data-rrm="${k}">✕</button></td></tr>`).join('') || '<tr><td colspan="4" class="muted">Sin prendas nuevas: es una devolución</td></tr>';
+  const parts = [`Devuelve <b>${money(t.R)}</b>`];
+  if (ret.fresh.length) parts.push(`Se lleva <b>${money(t.N)}</b>`);
+  parts.push(t.due > 0 ? `<b class="neg">El cliente paga ${money(t.due)}</b>` : t.left > 0 ? `<b class="pos">Se le devuelven ${money(t.left)}</b>` : t.R > 0 ? '<b>Cambio parejo: no hay diferencia</b>' : '');
+  $('#retSummary').innerHTML = parts.filter(Boolean).join(' · ');
+  $('#retPayBox').hidden = !(t.due > 0);
+  $('#retLeftBox').hidden = !(t.left > 0);
+  $('#retCustBox').hidden = !(t.left > 0 && $('#retLeft').value === 'credit' && !ret.sale.customer_id);
+  $('#retOk').disabled = !(t.R > 0);
+}
+$('#retItems').addEventListener('input', (e) => {
+  const id = e.target.dataset.rb; if (!id) return;
+  ret.back[id] = Math.max(0, Math.min(Number(e.target.dataset.max), Math.floor(Number(e.target.value) || 0)));
+  renderReturn(); $(`#retItems [data-rb="${id}"]`).focus();
+});
+$('#retNew').addEventListener('click', (e) => {
+  if (e.target.dataset.rq) { const [k, d] = e.target.dataset.rq.split(':').map(Number), l = ret.fresh[k]; l.qty += d; if (l.qty < 1) ret.fresh.splice(k, 1); else if (l.qty > l.a.stock) { l.qty = l.a.stock; toast('Sin stock suficiente', true); } }
+  if (e.target.dataset.rrm) ret.fresh.splice(Number(e.target.dataset.rrm), 1);
+  renderReturn();
+});
+function addFresh(a) {
+  const l = ret.fresh.find((x) => x.a.id === a.id);
+  if ((l?.qty || 0) + 1 > a.stock) return toast(`Sin stock suficiente de ${articleLabel(a)} (hay ${a.stock})`, true);
+  if (l) l.qty++; else ret.fresh.push({ a, qty: 1 });
+  beep(true); renderReturn();
+}
+$('#retScan').addEventListener('input', debounce(guard(() => searchInto($('#retResults'), $('#retScan').value.trim(), (a) => { addFresh(a); $('#retResults').innerHTML = ''; $('#retScan').value = ''; $('#retScan').focus(); }))));
+$('#retScan').addEventListener('keydown', guard(async (e) => {
+  if (e.key !== 'Enter' && e.key !== 'Tab') return;
+  const code = e.target.value.trim(); if (!code) return;
+  e.preventDefault();
+  try { addFresh(await api('GET', '/articles/barcode/' + encodeURIComponent(code))); e.target.value = ''; $('#retResults').innerHTML = ''; }
+  catch {
+    const list = await searchInto($('#retResults'), code, (a) => { addFresh(a); $('#retResults').innerHTML = ''; e.target.value = ''; });
+    if (list.length === 1) { addFresh(list[0]); e.target.value = ''; $('#retResults').innerHTML = ''; } else if (!list.length) { beep(false); toast('Código o artículo no encontrado', true); }
+  }
+}));
+$('#retLeft').addEventListener('change', renderReturn);
+$('#retCust').addEventListener('input', debounce(guard(async () => {
+  const q = $('#retCust').value.trim();
+  const list = q ? await api('GET', '/customers?q=' + encodeURIComponent(q) + '&limit=6') : [];
+  $('#retCustResults').innerHTML = list.map((c) => `<div class="item" data-rc="${c.id}" data-n="${esc(c.name)}"><span>${esc(c.name)}${c.doc ? ` · ${esc(c.doc)}` : ''}</span></div>`).join('');
+})));
+$('#retCustResults').addEventListener('click', (e) => {
+  const it = e.target.closest('.item'); if (!it) return;
+  ret.customer = { id: Number(it.dataset.rc), name: it.dataset.n };
+  $('#retCust').value = ret.customer.name; $('#retCustResults').innerHTML = '';
+});
+$('#retCancel').addEventListener('click', () => $('#retDialog').close());
+$('#retForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const t = retTotals();
+  try {
+    const items = Object.entries(ret.back).filter(([, q]) => q > 0).map(([sale_item_id, qty]) => ({ sale_item_id: Number(sale_item_id), qty }));
+    const payments = $$('#retPayBox [data-rp]').map((i) => ({ method: i.dataset.rp, amount: Number(i.value) || 0 })).filter((p) => p.amount > 0);
+    if (t.due > 0 && !payments.length && !(Number($('#retAcc').value) > 0)) payments.push({ method: 'efectivo', amount: t.due }); // por defecto: efectivo exacto
+    if (t.left > 0 && $('#retLeft').value === 'credit' && !ret.customer) throw new Error('Elegí el cliente al que se le deja el saldo a favor');
+    const r = await api('POST', '/returns', {
+      sale_id: ret.sale.id, items, note: $('#retNote').value, leftover: t.left > 0 ? $('#retLeft').value : undefined, customer_id: ret.customer?.id,
+      new_items: ret.fresh.map((l) => ({ article_id: l.a.id, qty: l.qty })), payments, account_amount: Number($('#retAcc').value) || undefined,
+    });
+    $('#retDialog').close(); toast(r.kind === 'cambio' ? 'Cambio registrado' : 'Devolución registrada');
+    await refreshCash(); await loadCash();
+    printReturn(r);
+  } catch (err) { $('#retError').textContent = err.message; }
+});
 
 // ---------- Estadísticas ----------
 let group = 'day';
@@ -804,16 +925,68 @@ const pageName = () => (settings.pageSize === 'letter' ? 'letter' : 'A4');
 const PAGE_MM = () => (settings.pageSize === 'letter' ? [215.9, 279.4] : [210, 297]);
 // Térmica: un ticket por copia, cada uno en su tramo de rollo. Común: hoja con el comprobante
 // (las dos copias juntas si entran, separadas por una línea de corte; si no, una por hoja).
-function printTicket(s) {
+function printDocument(doc, { ticket, comp, count }) {
   const copies = COPIES[settings.copies] || COPIES.both;
   if (settings.paper === '58' || settings.paper === '80') {
-    const html = copies.map((c, i) => `<div${i ? ' class="pb"' : ''}>${ticketHtml(s, c)}</div>`).join('');
+    const html = copies.map((c, i) => `<div${i ? ' class="pb"' : ''}>${ticket(doc, c)}</div>`).join('');
     return printHtml(html, `size:${settings.paper}mm auto;margin:3mm`);
   }
-  const together = s.items.length <= 10;
-  const html = copies.map((c, i) => `${i ? (together ? '<div class="cut">✂ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -</div>' : '') : ''}<div class="${i && !together ? 'pb' : ''}">${comprobanteHtml(s, c)}</div>`).join('');
+  const together = count <= 10;
+  const html = copies.map((c, i) => `${i ? (together ? '<div class="cut">✂ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -</div>' : '') : ''}<div class="${i && !together ? 'pb' : ''}">${comp(doc, c)}</div>`).join('');
   return printHtml(html, `size:${pageName()} portrait;margin:10mm`);
 }
+const printTicket = (s) => printDocument(s, { ticket: ticketHtml, comp: comprobanteHtml, count: s.items.length });
+
+// Comprobante de cambio / devolución (no fiscal): qué se devolvió, qué se llevó y cómo se resolvió la diferencia.
+const returnLines = (r) => {
+  const out = [['Valor de lo devuelto', money(r.value)]];
+  if (r.new_items.length) out.push(['Prendas nuevas', money(r.new_sale.total)], ['Cubierto con lo devuelto', money(r.exchange_amount)]);
+  const paid = r.new_sale ? r.new_sale.total - r.exchange_amount : 0;
+  if (paid > 0) out.push(['Diferencia pagada por el cliente', money(paid)]);
+  if (r.refund_cash) out.push([`Dinero devuelto (${r.refund_method})`, money(r.refund_cash)]);
+  if (r.credit_amount) out.push(['Saldo a favor del cliente', money(r.credit_amount)]);
+  return out;
+};
+const returnTitle = (r) => (r.kind === 'cambio' ? 'COMPROBANTE DE CAMBIO' : 'COMPROBANTE DE DEVOLUCIÓN');
+function returnTicketHtml(r, copy) {
+  const w = { 58: '48mm', 80: '72mm' }[settings.paper] || '80mm';
+  const row = (a, b, cls = '') => `<div class="r ${cls}"><span>${a}</span><span>${b}</span></div>`;
+  return `<div class="ticket" style="width:${w}">
+    <img class="logo" src="/img/logo-tinta.png" alt="Liu Vi" style="width:${w === '48mm' ? '30mm' : '40mm'}">
+    ${settings.name ? `<div class="c b" style="font-size:14px">${esc(settings.name)}</div>` : ''}
+    ${settings.cuit ? `<div class="c">CUIT ${esc(settings.cuit)}${settings.iva ? ' · ' + esc(settings.iva) : ''}</div>` : ''}
+    <div class="c b">${returnTitle(r)}</div>
+    <div class="c">${esc(when(r))} · N° D-${String(r.id).padStart(8, '0')}</div>
+    <div class="c">Corresponde a la venta ${compNumber({ id: r.sale_id })}</div>
+    ${r.customer_name ? `<div class="c">Cliente: ${esc(r.customer_name)}</div>` : ''}
+    <hr><div class="b">Devuelve</div>
+    ${r.items.map((i) => `<div>${esc(i.name)}</div>` + row(`${i.qty} x ${money(i.price)}`, money(i.qty * i.price))).join('')}
+    ${r.new_items.length ? `<hr><div class="b">Se lleva</div>${r.new_items.map((i) => `<div>${esc(i.name)}</div>` + row(`${i.qty} x ${money(i.price)}`, money(i.qty * i.price))).join('')}` : ''}
+    <hr>${returnLines(r).map(([a, b]) => row(a, b)).join('')}
+    <hr><div class="c" style="font-size:10px">Comprobante no válido como factura</div>
+    ${copy ? `<div class="c b" style="font-size:10px">${copy}</div>` : ''}
+  </div>`;
+}
+function returnCompHtml(r, copy) {
+  const table = (title, rows) => `<table><thead><tr><th>${title}</th><th>Cant.</th><th>Precio unit.</th><th>Subtotal</th></tr></thead><tbody>
+    ${rows.map((i) => `<tr><td>${esc(i.name)}</td><td class="n">${i.qty}</td><td class="n">${money(i.price)}</td><td class="n">${money(i.qty * i.price)}</td></tr>`).join('')}</tbody></table>`;
+  return `<div class="comp">
+    <div class="ch">
+      <div class="cl"><img src="/img/logo-tinta.png" alt="Liu Vi" style="width:38mm;height:auto">
+        ${settings.name ? `<b>${esc(settings.name)}</b>` : ''}${settings.info ? `<div>${esc(settings.info)}</div>` : ''}
+        ${settings.cuit ? `<div>CUIT: ${esc(settings.cuit)}</div>` : ''}${settings.iva ? `<div>Condición IVA: ${esc(settings.iva)}</div>` : ''}</div>
+      <div class="cx"><b>X</b><small>Documento no válido como factura</small></div>
+      <div class="cr"><b>${returnTitle(r).replace('COMPROBANTE DE ', '')}</b><div>N° D-${String(r.id).padStart(8, '0')}</div><div>Fecha: ${esc(when(r))}</div>
+        <div>Venta original: ${compNumber({ id: r.sale_id })}</div>${r.user_name ? `<div>Atendió: ${esc(r.user_name)}</div>` : ''}<div class="copy">${copy}</div></div>
+    </div>
+    <div class="cc"><span>Cliente: <b>${esc(r.customer_name || 'Consumidor final')}</b></span>${r.customer_doc ? `<span>DNI/CUIT: <b>${esc(r.customer_doc)}</b></span>` : ''}</div>
+    ${table('Devuelve', r.items)}${r.new_items.length ? table('Se lleva', r.new_items) : ''}
+    <div class="ct">${returnLines(r).map(([a, b], i, all) => `<div${i === all.length - 1 ? ' class="tot"' : ''}>${a}: ${b}</div>`).join('')}</div>
+    ${r.note ? `<div class="cf">Nota: ${esc(r.note)}</div>` : ''}
+    <div class="cf">${esc(settings.footer)}</div>
+  </div>`;
+}
+const printReturn = (r) => printDocument(r, { ticket: returnTicketHtml, comp: returnCompHtml, count: r.items.length + r.new_items.length + 4 });
 $('#lastTicket').addEventListener('click', () => (lastTicket ? printTicket(lastTicket) : toast('Todavía no hay un comprobante para reimprimir', true)));
 $('#autoTicket').checked = settings.auto;
 $('#autoTicket').addEventListener('change', (e) => { settings.auto = e.target.checked; saveSettings(); });

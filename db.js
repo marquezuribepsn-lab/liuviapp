@@ -155,6 +155,38 @@ export function openDb(path = defaultDbPath()) {
     );
     CREATE INDEX IF NOT EXISTS idx_account_customer ON account_movements(customer_id);
 
+    -- Devoluciones y cambios. «value» es lo devuelto a precio pagado (con el descuento de la venta prorrateado).
+    -- Ese valor se reparte en: exchange_amount (descontado de la compra nueva), refund_cash (plata devuelta) y credit_amount (saldo a favor).
+    CREATE TABLE IF NOT EXISTS returns (
+      id              INTEGER PRIMARY KEY,
+      sale_id         INTEGER NOT NULL REFERENCES sales(id),
+      session_id      INTEGER NOT NULL REFERENCES cash_sessions(id),
+      customer_id     INTEGER REFERENCES customers(id),
+      new_sale_id     INTEGER REFERENCES sales(id),
+      value           REAL NOT NULL,
+      exchange_amount REAL NOT NULL DEFAULT 0,
+      refund_cash     REAL NOT NULL DEFAULT 0,
+      refund_method   TEXT,
+      credit_amount   REAL NOT NULL DEFAULT 0,
+      note            TEXT NOT NULL DEFAULT '',
+      user_id         INTEGER,
+      created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    CREATE TABLE IF NOT EXISTS return_items (
+      id           INTEGER PRIMARY KEY,
+      return_id    INTEGER NOT NULL REFERENCES returns(id),
+      sale_item_id INTEGER NOT NULL REFERENCES sale_items(id),
+      article_id   INTEGER NOT NULL REFERENCES articles(id),
+      name         TEXT NOT NULL,
+      qty          INTEGER NOT NULL CHECK (qty > 0),
+      price        REAL NOT NULL,       -- precio unitario efectivamente pagado
+      list_price   REAL NOT NULL,       -- precio de lista (para las estadísticas, igual que las ventas)
+      cost         REAL NOT NULL DEFAULT 0,
+      brand        TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_returns_sale ON returns(sale_id);
+    CREATE INDEX IF NOT EXISTS idx_returns_created ON returns(created_at);
+
     CREATE TABLE IF NOT EXISTS brands (
       id   INTEGER PRIMARY KEY,
       name TEXT NOT NULL UNIQUE COLLATE NOCASE
@@ -202,6 +234,7 @@ export function openDb(path = defaultDbPath()) {
   ensureColumn('sales', 'customer_name');
   ensureColumn('sales', 'customer_doc');
   ensureColumn('sales', 'customer_id');
+  ensureColumn('sales', 'exchange_amount', 'REAL NOT NULL DEFAULT 0'); // parte de la venta cubierta por mercadería devuelta (cambio)
   ensureColumn('sales', 'account_amount', 'REAL NOT NULL DEFAULT 0'); // parte de la venta pagada con la cuenta del cliente
   ensureColumn('cash_movements', 'user_id');
   ensureColumn('stock_movements', 'user_id');
@@ -232,6 +265,15 @@ export function openDb(path = defaultDbPath()) {
       db.prepare('UPDATE roles SET permissions=? WHERE id=?').run(JSON.stringify([...new Set([...perms, ...NEW])]), r.id);
     }
     setSetting(db, 'migr_clientes_v1', '1');
+  }
+  // Idem para cambios y devoluciones: los roles que ya cobran pueden hacerlos.
+  if (!db.prepare("SELECT 1 FROM settings WHERE key='migr_devolver_v1'").get()) {
+    for (const r of db.prepare('SELECT id, permissions, is_admin FROM roles').all()) {
+      let perms; try { perms = JSON.parse(r.permissions); } catch { continue; }
+      if (r.is_admin || !perms.includes('ventas.cobrar')) continue;
+      db.prepare('UPDATE roles SET permissions=? WHERE id=?').run(JSON.stringify([...new Set([...perms, 'ventas.devolver'])]), r.id);
+    }
+    setSetting(db, 'migr_devolver_v1', '1');
   }
   return db;
 }
