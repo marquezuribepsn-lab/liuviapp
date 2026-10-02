@@ -123,6 +123,7 @@ export function createApp(db, opts = {}) {
     const re = new RegExp('^' + pattern.replace(/:(\w+)/g, (_, k) => (keys.push(k), '([^/]+)')) + '$');
     routes.push({ method, re, keys, perm, handler });
   };
+  const passive = (method, pattern, handler) => { route(method, pattern, 'public', handler); routes.at(-1).passive = true; };
   const maskCost = (v, can) => {
     if (can('costos.ver') || !v) return v;
     const strip = ({ cost, ...rest }) => rest;
@@ -1216,6 +1217,7 @@ export function createApp(db, opts = {}) {
 
   // ---------- Copias de seguridad ----------
   const BACKUP = 'sistema.copias';
+  passive('GET', '/api/backup/activity', () => { const { error, ...st } = backups.activityStatus(); return st; }); // solo el aviso «Respaldando»; pública para no contar como actividad del usuario (bloqueo por inactividad)
   route('GET', '/api/backup', BACKUP, () => backups.status());
   route('PUT', '/api/backup', BACKUP, ({ body }) => {
     try { backups.configure({ dir: body.dir, auto: body.auto, pc_name: body.pc_name, times: body.times, on_close: body.on_close, keep: body.keep }); } catch (e) { throw bad(e.message); }
@@ -1309,7 +1311,7 @@ export function createApp(db, opts = {}) {
           const m = r.re.exec(url.pathname);
           if (!m) continue;
           const params = Object.fromEntries(r.keys.map((k, i) => [k, m[i + 1]]));
-          const user = sessionUser(req);
+          const user = r.passive ? null : sessionUser(req); // las consultas pasivas no cuentan como actividad (bloqueo por inactividad)
           const can = (p) => !!user && user.permissions.includes(p);
           if (r.perm !== 'public') {
             if (!user) throw new HttpError(401, 'Iniciá sesión para continuar');
