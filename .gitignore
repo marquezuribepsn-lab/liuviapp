@@ -4,3 +4,4 @@ data/
 *.db-*
 google-client.json
 installer/dist/
+installer/google-client.json

@@ -1476,6 +1476,7 @@ $('#userForm').addEventListener('submit', async (e) => {
 });
 
 // ---------- Copias de seguridad ----------
+const G_LOGO = '<svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.9 6.1C12.4 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.2 5.5-4.7 7.2l7.3 5.7c4.3-4 6.7-9.9 6.7-17.4z"/><path fill="#FBBC05" d="M10.5 28.7a14.5 14.5 0 0 1 0-9.4l-7.9-6.1a24 24 0 0 0 0 21.6l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.3-5.7c-2 1.4-4.6 2.3-8.6 2.3-6.3 0-11.6-4.1-13.5-9.8l-7.9 6.1C6.5 42.6 14.6 48 24 48z"/></svg>';
 function renderGoogle(g) {
   const box = $('#gdBox');
   if (!g) { box.innerHTML = ''; return; }
@@ -1483,16 +1484,41 @@ function renderGoogle(g) {
   if (g.connected) {
     box.innerHTML = `<p>✅ Conectado a Google Drive${g.email ? ` como <b>${esc(g.email)}</b>` : ''}.<br>Las copias se suben a la carpeta <b>${esc(g.folder)}</b> de tu Drive.</p>
       <p class="muted">${g.last_at ? `Última subida: <b>${esc(g.last_at)}</b> (${esc(g.last_name)})` : 'Todavía no se subió ninguna copia. Se sube sola con cada copia (una por día y al cerrar la caja).'}</p>${err}
-      <div class="row"><button type="button" id="gdRun" class="primary">Hacer copia y subirla ahora</button><button type="button" id="gdOff" class="ghost">Desconectar</button></div>`;
+      <div class="row"><button type="button" id="gdRun" class="primary">Hacer copia y subirla ahora</button><button type="button" id="gdOff" class="ghost">Desconectar cuenta</button></div>`;
   } else if (g.configured) {
-    box.innerHTML = `<p>Conectá la cuenta de Google donde querés guardar las copias. Se abre la página de Google para que inicies sesión y des el permiso (solo accede a lo que crea este sistema).</p>${err}
-      <div class="row"><button type="button" id="gdOn" class="primary">Conectar con Google</button>${g.credentials_from === 'propias' ? '<button type="button" id="gdCreds" class="ghost">Cambiar credenciales</button>' : ''}</div>`;
+    box.innerHTML = `<p>Vinculá tu cuenta de Google para guardar las copias en tu Drive. Se abre la ventana de Google: elegís tu cuenta, tocás <b>Permitir</b> y listo.</p>${err}
+      <div class="row"><button type="button" id="gdOn" class="gBtn">${G_LOGO}<span>Conectar con Google</span></button>${g.credentials_from === 'propias' ? '<button type="button" id="gdCreds" class="link">Cambiar credenciales</button>' : ''}</div>
+      <p class="muted" style="margin-top:6px">Solo accede a la carpeta de copias que crea este sistema; no ve el resto de tu Drive.</p>`;
   } else {
-    box.innerHTML = `<p>Para conectar tu cuenta hay que cargar una sola vez las credenciales de Google (gratis, se crean en 5 minutos en Google Cloud). Los pasos están en el archivo <b>LEEME-GOOGLE-DRIVE.md</b> de la carpeta del programa.</p>${err}
-      <form id="gdCredForm"><label>ID de cliente <input name="id" placeholder="123456-abc.apps.googleusercontent.com" required></label>
-      <label>Secreto de cliente <input name="secret" type="password" autocomplete="off" required></label>
-      <div id="gdCredErr" class="neg"></div><button class="primary">Guardar credenciales</button></form>`;
+    box.innerHTML = `<p><b>Falta un paso inicial</b> (una sola vez): Google necesita que este programa tenga sus credenciales. Los pasos están en <b>LEEME-GOOGLE-DRIVE.md</b>. Cuando bajes el archivo <code>.json</code> de Google Cloud, importalo acá y aparece el botón «Conectar con Google».</p>${err}
+      <div class="row"><label class="gFile ghost">Importar archivo de Google (.json)<input type="file" id="gdFile" accept=".json,application/json" hidden></label></div>
+      <div id="gdCredErr" class="neg"></div>
+      <details style="margin-top:8px"><summary class="muted">Escribir el ID y el secreto a mano</summary>
+        <form id="gdCredForm"><label>ID de cliente <input name="id" placeholder="123456-abc.apps.googleusercontent.com" required></label>
+        <label>Secreto de cliente <input name="secret" type="password" autocomplete="off" required></label>
+        <button class="primary">Guardar credenciales</button></form></details>`;
   }
+}
+// Conectar: se abre una ventanita de Google (como «Acceder con Google»); mientras tanto esta pantalla espera el resultado.
+let gdWatch = null;
+async function connectGoogle() {
+  const w = window.open('', 'liuvi-google', 'popup=yes,width=520,height=720'); // se abre ya, dentro del clic, para que no la bloquee el navegador
+  try {
+    const { url } = await api('POST', '/backup/google/start', { popup: !!w });
+    if (!w) { location.href = url; return; }
+    w.location.href = url;
+    clearInterval(gdWatch);
+    const t0 = Date.now();
+    gdWatch = setInterval(guard(async () => {
+      const b = await api('GET', '/backup');
+      if (b.google?.connected || Date.now() - t0 > 5 * 60_000 || (w.closed && Date.now() - t0 > 3000)) {
+        clearInterval(gdWatch);
+        try { if (b.google?.connected) w.close(); } catch { /* ya se cerró */ }
+        renderBackup(b);
+        if (b.google?.connected) toast('Google Drive conectado');
+      }
+    }), 1500);
+  } catch (e) { try { w?.close(); } catch { /* nada */ } throw e; }
 }
 function renderBackup(b) {
   $('#bkDir').value = b.custom_dir ? b.dir : ''; $('#bkDir').placeholder = b.default_dir || 'C:\\Users\\Mi nombre\\Mi unidad\\Liuvi';
@@ -1525,10 +1551,16 @@ async function backupNow() {
 $('#bkRun').addEventListener('click', backupNow);
 $('#gdBox').addEventListener('click', guard(async (e) => {
   const id = e.target.id;
+  if (e.target.closest('#gdOn')) return connectGoogle();
   if (id === 'gdRun') await backupNow();
-  if (id === 'gdOn') { const { url } = await api('POST', '/backup/google/start', {}); location.href = url; }
   if (id === 'gdOff' && await uiConfirm('Las copias que ya están en tu Drive no se borran.', { title: '¿Desconectar Google Drive?', ok: 'Desconectar', danger: true })) { renderBackup(await api('POST', '/backup/google/disconnect', {})); toast('Google Drive desconectado'); }
   if (id === 'gdCreds') renderGoogle({ configured: false });
+}));
+$('#gdBox').addEventListener('change', guard(async (e) => {
+  if (e.target.id !== 'gdFile' || !e.target.files[0]) return;
+  const text = await e.target.files[0].text();
+  try { renderBackup(await api('PUT', '/backup/google/credentials', { json: text })); toast('Credenciales importadas: ya podés conectar tu cuenta'); }
+  catch (err) { $('#gdCredErr').textContent = err.message; }
 }));
 $('#gdBox').addEventListener('submit', async (e) => {
   e.preventDefault();

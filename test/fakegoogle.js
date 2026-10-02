@@ -16,6 +16,9 @@ export async function fakeGoogle() {
       if (st.badRefresh) return json(400, { error: 'invalid_grant', error_description: 'Token has been expired or revoked.' });
       return json(200, { access_token: 'at-good', expires_in: st.expires });
     }
+    if (url.pathname === '/auth') { // «el usuario elige su cuenta y permite»: Google vuelve al sistema con el código
+      res.writeHead(302, { Location: `${url.searchParams.get('redirect_uri')}?code=c&state=${url.searchParams.get('state')}` }); return res.end();
+    }
     if (url.pathname === '/revoke') { st.revoked++; return json(200, {}); }
     if (!authed) return json(401, { error: { message: 'no auth' } });
     if (url.pathname === '/userinfo') return json(200, { email: 'dueña@gmail.com' });

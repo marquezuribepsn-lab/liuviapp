@@ -25,6 +25,8 @@ mv "$WORK/stage/runtime/LICENSE" "$WORK/stage/runtime/LICENSE-node.txt"
 git ls-files -z --cached --others --exclude-standard | tar --null -T - -c | tar -x -C "$WORK/stage"
 (cd "$WORK/stage" && rm -rf test installer .github .gitattributes .gitignore iniciar.command iniciar.bat)
 cp installer/liuvi.vbs installer/detener.vbs "$WORK/stage/"
+# Credenciales de Google (si existen): el instalador las trae y en cada PC alcanza con «Conectar con Google». No van al repositorio.
+if [ -n "${GOOGLE_CLIENT_JSON:-}" ] && [ -f "$GOOGLE_CLIENT_JSON" ]; then cp "$GOOGLE_CLIENT_JSON" "$WORK/stage/google-client.json"; elif [ -f installer/google-client.json ]; then cp installer/google-client.json "$WORK/stage/google-client.json"; fi
 
 # 3. Imágenes y compilación
 python3 installer/make-assets.py "$WORK/assets"

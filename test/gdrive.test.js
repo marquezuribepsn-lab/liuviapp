@@ -127,3 +127,30 @@ test('sin elegir carpeta, cada computadora guarda las copias junto a su base de 
     rmSync(otra, { recursive: true, force: true });
   } finally { db.close(); rmSync(base, { recursive: true, force: true }); }
 });
+
+test('credenciales: se importa el archivo de Google y la ventanita de conexión avisa y se cierra', async () => {
+  const g = await fakeGoogle();
+  const t = await start({ google: { base: g.base } });
+  try {
+    const json = (o) => JSON.stringify(o);
+    assert.equal((await t.admin('PUT', '/api/backup/google/credentials', { json: 'no es json' })).status, 400);
+    const web = await t.admin('PUT', '/api/backup/google/credentials', { json: json({ web: { client_id: 'a.apps.googleusercontent.com', client_secret: 's' } }) });
+    assert.equal(web.status, 400); assert.match(web.data.error, /Aplicación de escritorio/);
+    assert.equal((await t.admin('PUT', '/api/backup/google/credentials', { json: json({ installed: { client_id: 'abc.apps.googleusercontent.com' } }) })).status, 400, 'falta el secreto');
+    const ok = await t.admin('PUT', '/api/backup/google/credentials', { json: json({ installed: { client_id: 'abc-1.apps.googleusercontent.com', client_secret: 'sec', project_id: 'liuvi' } }) });
+    assert.equal(ok.status, 200); assert.equal(ok.data.google.configured, true);
+
+    // Conexión en ventanita: el callback avisa a la pantalla principal y se cierra
+    const st = (await t.admin('POST', '/api/backup/google/start', { popup: true })).data.url;
+    const html = await fetch(`${t.base}/api/backup/google/callback?state=${stateOf(st)}&code=c`).then((r) => r.text());
+    assert.match(html, /postMessage/); assert.match(html, /window\.close/); assert.match(html, /Ya podés cerrar esta ventana/);
+    assert.equal((await t.admin('GET', '/api/backup')).data.google.connected, true);
+    // Sin ventanita (misma pestaña) vuelve al sistema
+    const st2 = (await t.admin('POST', '/api/backup/google/start', {})).data.url;
+    const html2 = await fetch(`${t.base}/api/backup/google/callback?state=${stateOf(st2)}&code=c`).then((r) => r.text());
+    assert.match(html2, /location\.replace/); assert.doesNotMatch(html2, /window\.close/);
+    // El usuario no da el permiso
+    const html3 = await fetch(`${t.base}/api/backup/google/callback?error=access_denied`).then((r) => r.text());
+    assert.match(html3, /No diste el permiso/);
+  } finally { t.close(); g.close(); }
+});
