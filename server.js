@@ -32,7 +32,8 @@ const appWindow = process.env.LIUVI_APP_WINDOW === '1';
 const url = `http://localhost:${port}`;
 server.on('error', async (e) => {
   if (e.code === 'EADDRINUSE') {
-    const other = await probeInstance(port);
+    let other = await probeInstance(port);
+    for (let i = 0; !other && silent && i < 2; i++) other = await probeInstance(port); // ocupado un instante (copia de seguridad, etc.): reintenta
     console.error(portBusyMessage(port, appVersion(), other));
     if (silent && other) openBrowser(url, { appWindow }); // ya estaba abierto: el acceso directo solo trae la ventana
     if (silent && other) await new Promise((r) => setTimeout(r, 1500)); // deja que el sistema lance la ventana antes de salir
