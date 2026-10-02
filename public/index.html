@@ -178,6 +178,7 @@
     <input id="artSearch" placeholder="Buscar por nombre, código, categoría, talle, color…">
     <select id="artBrand" style="width:auto"><option value="">Todas las marcas</option></select>
     <label class="inline"><input type="checkbox" id="artLow"> Solo stock bajo</label>
+    <button id="artPrices" class="ghost" title="Subir o bajar precios por marca, categoría, etc.">Cambiar precios</button>
     <button id="artImport" class="ghost" title="Cargar muchos artículos de una vez desde una planilla">Importar desde Excel</button>
     <button id="artNew" class="primary">+ Nuevo artículo</button>
   </div>
@@ -233,6 +234,28 @@
     </div>
   </dialog>
 
+  <dialog id="priceDialog" class="wide">
+    <h2>Cambiar precios en bloque</h2>
+    <p class="muted" style="margin-top:0">Elegí a qué artículos se aplica y cuánto cambia. Antes de guardar vas a ver cómo queda, y después podés deshacer la última tanda.</p>
+    <div class="grid2">
+      <label>Marca <select id="prBrand"></select></label>
+      <label>Categoría <input id="prCategory" list="cats" placeholder="(todas)" autocomplete="off"></label>
+      <label>Nombre contiene <input id="prQuery" placeholder="(todos)" autocomplete="off"></label>
+      <label class="inline" style="align-self:end"><input type="checkbox" id="prStock"> Solo los que tienen stock</label>
+      <label>Qué cambiar <select id="prTarget"><option value="price">Precio de venta</option><option value="cost" class="col-cost">Costo</option><option value="both" class="col-cost">Precio de venta y costo</option></select></label>
+      <label>Tipo de cambio <select id="prMode"><option value="percent">Porcentaje (%)</option><option value="amount">Monto fijo ($)</option></select></label>
+      <label>Cantidad <input id="prValue" type="number" step="0.01" placeholder="Ej: 15 para subir 15%, -10 para bajar 10%"></label>
+      <label>Redondear el precio a <select id="prRound"><option value="0">Sin redondear</option><option value="10">$10</option><option value="50">$50</option><option value="100" selected>$100</option><option value="500">$500</option><option value="1000">$1.000</option></select></label>
+    </div>
+    <div class="row"><button type="button" id="prPreview" class="ghost">Ver cómo queda</button><span class="muted" id="prSummary"></span></div>
+    <div style="max-height:260px;overflow:auto" id="prPreviewBox" hidden><table id="prTable"><thead><tr><th>Artículo</th><th class="num">Precio actual</th><th class="num">Precio nuevo</th><th class="num col-cost">Costo actual</th><th class="num col-cost">Costo nuevo</th></tr></thead><tbody></tbody></table></div>
+    <div class="msg" id="prError"></div>
+    <div class="row end"><button type="button" class="ghost" id="prClose">Cerrar</button><button type="button" class="primary" id="prApply" disabled>Aplicar cambios</button></div>
+    <details style="margin-top:10px"><summary style="cursor:pointer">Historial de cambios</summary>
+      <table id="prHistory"><tbody></tbody></table>
+      <div class="row end"><button type="button" class="ghost danger" id="prUndo">Deshacer el último cambio</button></div>
+    </details>
+  </dialog>
   <dialog id="artDialog">
     <form id="artForm" method="dialog">
       <h2 id="artTitle">Artículo</h2>
