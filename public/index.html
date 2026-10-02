@@ -112,6 +112,7 @@
       <div id="change" class="muted"></div>
       <div class="row">
         <button id="charge" class="primary">Cobrar</button>
+        <button id="layaway" class="ghost" title="El cliente deja una seña y la mercadería queda apartada a su nombre">Señar / apartar</button>
         <button id="holdSale" class="ghost" title="Guarda esta venta para atender a otro cliente y retomarla después">⏸ Poner en espera</button>
         <button id="clearCart" class="ghost">Vaciar</button>
         <button id="lastTicket" class="ghost">Reimprimir último</button>
@@ -144,6 +145,10 @@
   </div>
   <h2>Ventas del día <input id="salesDate" type="date" style="width:auto;margin-left:10px;font-size:14px"></h2>
   <table id="salesTable"><thead><tr><th>N°</th><th>Hora</th><th>Vendedor</th><th>Detalle</th><th>Pago</th><th>Total</th><th></th></tr></thead><tbody></tbody></table>
+  <div id="layBox" hidden>
+    <h2>Apartados (señas) abiertos</h2>
+    <table id="layTable"><thead><tr><th>N°</th><th>Cliente</th><th>Mercadería apartada</th><th>Total</th><th>Pagó</th><th>Falta</th><th>Desde</th><th></th></tr></thead><tbody></tbody></table>
+  </div>
   <div id="returnsBox" hidden>
     <h2>Cambios y devoluciones del día</h2>
     <table id="retTable"><thead><tr><th>N°</th><th>Hora</th><th>Tipo</th><th>Detalle</th><th>Valor devuelto</th><th>Resolución</th><th></th></tr></thead><tbody></tbody></table>
@@ -264,6 +269,8 @@
     <p class="muted" id="cdInfo"></p>
     <div class="kpis" id="cdKpis"></div>
     <div class="row" id="cdActions"></div>
+    <div id="cdLay" hidden><h3>Apartados abiertos</h3>
+      <div class="scrollBox" style="max-height:160px"><table id="cdLayTable"><thead><tr><th>N°</th><th>Mercadería</th><th>Total</th><th>Pagó</th><th>Falta</th><th></th></tr></thead><tbody></tbody></table></div></div>
     <h3>Cuenta corriente</h3>
     <div class="scrollBox" style="max-height:200px"><table id="cdMovs"><thead><tr><th>Fecha</th><th>Concepto</th><th>Monto</th><th>Usuario</th></tr></thead><tbody></tbody></table></div>
     <h3>Compras</h3>
@@ -561,6 +568,34 @@
     <label>Nota (opcional) <input id="retNote" maxlength="200" placeholder="Motivo del cambio, etc."></label>
     <div id="retError" class="neg"></div>
     <div class="row end"><button type="button" id="retCancel" class="ghost">Cancelar</button><button class="primary" id="retOk">Confirmar</button></div>
+  </form>
+</dialog>
+<dialog id="layDialog" class="wide">
+  <form id="layForm" method="dialog">
+    <h2>Señar / apartar</h2>
+    <p class="muted" id="layInfo"></p>
+    <table id="layItems"><thead><tr><th>Mercadería que queda apartada</th><th>Cant.</th><th>Precio</th></tr></thead><tbody></tbody></table>
+    <div class="card" id="laySummary" style="margin:12px 0"></div>
+    <div class="grid2">
+      <label>Seña que deja <input id="layAmount" type="number" min="0.01" step="0.01" required></label>
+      <label>Medio <select id="layMethod"><option value="efectivo">Efectivo</option><option value="tarjeta">Tarjeta</option><option value="transferencia">Transferencia</option><option value="cuenta" hidden>Saldo a favor</option></select></label>
+    </div>
+    <label>Nota (opcional) <input id="layNote" maxlength="200" placeholder="Ej: retira el sábado"></label>
+    <div id="layError" class="neg"></div>
+    <div class="row end"><button type="button" id="layCancelBtn" class="ghost">Cancelar</button><button class="primary">Dejar seña y apartar</button></div>
+  </form>
+</dialog>
+<dialog id="layPayDialog">
+  <form id="layPayForm" method="dialog">
+    <h2 id="layPayTitle">Cobrar</h2>
+    <p class="muted" id="layPayInfo"></p>
+    <div class="grid2">
+      <label>Monto <input id="layPayAmount" type="number" min="0.01" step="0.01" required></label>
+      <label>Medio <select id="layPayMethod"><option value="efectivo">Efectivo</option><option value="tarjeta">Tarjeta</option><option value="transferencia">Transferencia</option><option value="cuenta" hidden>Saldo a favor</option></select></label>
+    </div>
+    <p class="muted" id="layPayHint"></p>
+    <div id="layPayError" class="neg"></div>
+    <div class="row end"><button type="button" id="layPayCancel" class="ghost">Cancelar</button><button class="primary" id="layPayOk">Cobrar</button></div>
   </form>
 </dialog>
 <dialog id="payDialog">

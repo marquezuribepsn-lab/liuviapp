@@ -57,7 +57,10 @@ export function createApp(db, opts = {}) {
     return s;
   };
 
-  const ART = 'SELECT a.*, b.name AS brand FROM articles a LEFT JOIN brands b ON b.id = a.brand_id';
+  // `reserved`: unidades apartadas (con seña) que todavía no se pueden vender a otro cliente.
+  const ART = `SELECT a.*, b.name AS brand,
+    COALESCE((SELECT SUM(li.qty) FROM layaway_items li JOIN layaways l ON l.id = li.layaway_id WHERE li.article_id = a.id AND l.status = 'open'),0) AS reserved
+    FROM articles a LEFT JOIN brands b ON b.id = a.brand_id`;
 
   // Busca la marca sin distinguir mayúsculas; si no existe, la crea (evita duplicados por tipeo).
   function resolveBrand(name) {
@@ -277,7 +280,7 @@ export function createApp(db, opts = {}) {
   // Limpiar el stock completo. Es irreversible: la pantalla pide dos confirmaciones y acá se exige la palabra LIMPIAR.
   // Si hay carpeta de copias configurada, primero se hace una copia y, si falla, no se toca nada.
   route('GET', '/api/stock/clear/preview', 'stock.limpiar', () => {
-    const sold = '(SELECT DISTINCT article_id FROM sale_items)';
+    const sold = '(SELECT article_id FROM sale_items UNION SELECT article_id FROM layaway_items)';
     const r = db.prepare(`SELECT COUNT(*) AS total, COALESCE(SUM(active),0) AS active, COALESCE(SUM(CASE WHEN active = 1 THEN stock ELSE 0 END),0) AS units,
       COALESCE(SUM(CASE WHEN id IN ${sold} THEN 1 ELSE 0 END),0) AS with_sales FROM articles`).get();
     return { ...r, deletable: r.total - r.with_sales, backup: !!backups.dirOf() };
@@ -285,6 +288,7 @@ export function createApp(db, opts = {}) {
   route('POST', '/api/stock/clear', 'stock.limpiar', ({ body, user }) => {
     if (importer.isRunning()) throw new HttpError(409, 'Hay una carga de Excel en curso. Esperá a que termine.');
     if (!['zero', 'delete'].includes(body.mode)) throw bad('Elegí qué querés hacer con el stock');
+    if (db.prepare("SELECT 1 FROM layaways WHERE status='open'").get()) throw new HttpError(409, 'Hay apartados (señas) abiertos con mercadería reservada: completalos o cancelalos antes de limpiar el stock.');
     if (String(body.confirm ?? '').trim().toUpperCase() !== 'LIMPIAR') throw bad('Para confirmar, escribí la palabra LIMPIAR');
     let backup = false;
     if (backups.dirOf()) {
@@ -292,7 +296,7 @@ export function createApp(db, opts = {}) {
       catch (e) { throw new HttpError(500, `No se limpió nada: no se pudo hacer la copia de seguridad previa (${e.message}). Revisá la pestaña Copias.`); }
     }
     return tx(db, () => {
-      const sold = 'SELECT DISTINCT article_id FROM sale_items';
+      const sold = 'SELECT article_id FROM sale_items UNION SELECT article_id FROM layaway_items';
       const withStock = db.prepare('SELECT id, stock FROM articles WHERE stock <> 0').all();
       const units = withStock.reduce((s, a) => s + a.stock, 0);
       for (const a of withStock) moveStock(a.id, -a.stock, 'limpieza', null, user.id); // queda registrado en los movimientos
@@ -359,6 +363,121 @@ export function createApp(db, opts = {}) {
 
   route('GET', '/api/cash/sessions', 'caja.ver', () =>
     db.prepare('SELECT * FROM cash_sessions ORDER BY id DESC LIMIT 60').all().map(sessionSummary));
+
+  // Apartados (señas)
+  function layawayDetail(id) {
+    const l = db.prepare(`SELECT l.*, c.name AS customer_name, c.doc AS customer_doc, c.phone AS customer_phone, u.name AS user_name
+      FROM layaways l JOIN customers c ON c.id = l.customer_id LEFT JOIN users u ON u.id = l.user_id WHERE l.id=?`).get(id);
+    if (!l) return null;
+    const items = db.prepare('SELECT article_id, name, qty, price FROM layaway_items WHERE layaway_id=?').all(id).map((i) => ({ ...i }));
+    const payments = db.prepare('SELECT amount, method, created_at FROM layaway_payments WHERE layaway_id=? ORDER BY id').all(id).map((p) => ({ ...p }));
+    const paid = round2(payments.reduce((sum, p) => sum + p.amount, 0));
+    return { ...l, items, payments, paid, remaining: round2(l.total - paid), customer_balance: customerBalance(l.customer_id) };
+  }
+  // Cuando el pago se completa: se genera la venta (sale del stock, a los precios fijados) con las señas como pago ya cobrado.
+  function completeLayaway(l, user, can) {
+    const rows = db.prepare('SELECT method, SUM(amount) AS a FROM layaway_payments WHERE layaway_id=? GROUP BY method').all(l.id);
+    const items = db.prepare('SELECT article_id, qty, price FROM layaway_items WHERE layaway_id=?').all(l.id);
+    const sale = createSale({ items: items.map((i) => ({ article_id: i.article_id, qty: i.qty })), payments: [], customer_id: l.customer_id }, user, can, 0, {
+      prepaid: rows.filter((r) => METHODS.includes(r.method)).map((r) => ({ method: r.method, amount: round2(r.a) })),
+      prepaidAccount: round2(rows.filter((r) => r.method === 'cuenta').reduce((sum, r) => sum + r.a, 0)),
+      locked: Object.fromEntries(items.map((i) => [i.article_id, i.price])), layawayId: l.id,
+    }).data;
+    db.prepare("UPDATE layaways SET status='completed', sale_id=?, closed_at=datetime('now','localtime') WHERE id=?").run(sale.id, l.id);
+    return sale;
+  }
+  function addLayawayPayment(l, amount, method, user) {
+    const session = requireSession();
+    if (method === 'cuenta') {
+      if (amount > customerBalance(l.customer_id)) throw bad('El cliente no tiene tanto saldo a favor');
+      db.prepare('INSERT INTO account_movements (customer_id,amount,concept,user_id) VALUES (?,?,?,?)').run(l.customer_id, -amount, `Seña apartado #${l.id}`, user.id);
+    } else {
+      db.prepare('INSERT INTO cash_movements (session_id,type,method,amount,concept,user_id) VALUES (?,?,?,?,?,?)')
+        .run(session.id, 'ingreso', method, amount, `Seña apartado #${l.id} · ${db.prepare('SELECT name FROM customers WHERE id=?').get(l.customer_id).name}`, user.id);
+    }
+    db.prepare('INSERT INTO layaway_payments (layaway_id,amount,method,user_id) VALUES (?,?,?,?)').run(l.id, amount, method, user.id);
+  }
+  const payParams = (body, remaining) => {
+    const amount = round2(num(body.amount, 'Monto'));
+    if (amount <= 0) throw bad('El monto debe ser mayor a 0');
+    if (amount > remaining + 0.001) throw bad(`El apartado solo debe ${money(remaining)}: no se puede cobrar más`);
+    const method = body.method || 'efectivo';
+    if (![...METHODS, 'cuenta'].includes(method)) throw bad('Medio de pago inválido');
+    return { amount, method };
+  };
+  route('GET', '/api/layaways', ['ventas.cobrar', 'clientes.ver'], ({ query }) => {
+    const status = query.get('status') || 'open', customer = query.get('customer_id');
+    return db.prepare(`SELECT id FROM layaways WHERE (? = 'all' OR status = ?) AND (? IS NULL OR customer_id = ?) ORDER BY id DESC LIMIT 200`)
+      .all(status, status, customer, customer).map((r) => layawayDetail(r.id));
+  });
+  route('GET', '/api/layaways/:id', ['ventas.cobrar', 'clientes.ver'], ({ params }) => {
+    const l = layawayDetail(params.id);
+    if (!l) throw new HttpError(404, 'Apartado no encontrado');
+    return l;
+  });
+  route('POST', '/api/layaways', 'ventas.cobrar', ({ body, user, can }) => tx(db, () => {
+    requireSession();
+    const customer = db.prepare('SELECT * FROM customers WHERE id=? AND active=1').get(Number(body.customer_id) || 0);
+    if (!customer) throw bad('Elegí el cliente que deja la seña');
+    const asked = Array.isArray(body.items) ? body.items : [];
+    if (!asked.length) throw bad('El apartado no tiene artículos');
+    const merged = new Map();
+    for (const it of asked) merged.set(Number(it.article_id), (merged.get(Number(it.article_id)) || 0) + num(it.qty, 'Cantidad', { min: 1, int: true }));
+    let total = 0; const lines = [];
+    for (const [id, qty] of merged) {
+      const a = db.prepare(`${ART} WHERE a.id=? AND a.active=1`).get(id);
+      if (!a) throw new HttpError(404, `Artículo ${id} no encontrado`);
+      const free = a.stock - a.reserved;
+      if (free < qty) throw new HttpError(409, `No hay stock libre de "${a.name}" ${a.size} para apartar (hay ${Math.max(free, 0)}${a.reserved ? `, ${a.reserved} ya apartado${a.reserved === 1 ? '' : 's'}` : ''})`);
+      lines.push({ a, qty }); total += a.price * qty;
+    }
+    total = round2(total);
+    const { amount, method } = payParams(body.deposit || {}, total);
+    const { lastInsertRowid: id } = db.prepare('INSERT INTO layaways (customer_id,total,note,user_id) VALUES (?,?,?,?)')
+      .run(customer.id, total, String(body.note ?? '').trim().slice(0, 200), user.id);
+    for (const { a, qty } of lines) {
+      db.prepare('INSERT INTO layaway_items (layaway_id,article_id,name,qty,price) VALUES (?,?,?,?,?)')
+        .run(id, a.id, [a.brand, a.name, a.size, a.color].filter(Boolean).join(' · '), qty, a.price);
+    }
+    const l = db.prepare('SELECT * FROM layaways WHERE id=?').get(id);
+    addLayawayPayment(l, amount, method, user);
+    const sale = amount >= total - 0.001 ? completeLayaway(l, user, can) : null; // señó todo: se entrega ya
+    return { status: 201, data: { ...layawayDetail(id), sale } };
+  }));
+  route('POST', '/api/layaways/:id/payment', 'ventas.cobrar', ({ params, body, user, can }) => tx(db, () => {
+    const l = layawayDetail(params.id);
+    if (!l) throw new HttpError(404, 'Apartado no encontrado');
+    if (l.status !== 'open') throw new HttpError(409, 'Este apartado ya está cerrado');
+    const { amount, method } = payParams(body, l.remaining);
+    addLayawayPayment(l, amount, method, user);
+    const sale = amount >= l.remaining - 0.001 ? completeLayaway(l, user, can) : null; // completó el pago: se entrega y sale del stock
+    return { status: 201, data: { ...layawayDetail(l.id), sale } };
+  }));
+  // Cancelar: la mercadería se libera y se decide qué pasa con lo señado (devolverlo o dejarlo como saldo a favor).
+  route('POST', '/api/layaways/:id/cancel', 'ventas.devolver', ({ params, body, user }) => tx(db, () => {
+    const l = layawayDetail(params.id);
+    if (!l) throw new HttpError(404, 'Apartado no encontrado');
+    if (l.status !== 'open') throw new HttpError(409, 'Este apartado ya está cerrado');
+    const refund = body.refund;
+    if (refund !== 'credit' && !METHODS.includes(refund)) throw bad('Indicá qué se hace con la seña: devolverla o dejarla como saldo a favor');
+    const cash = round2(l.payments.filter((p) => p.method !== 'cuenta').reduce((sum, p) => sum + p.amount, 0));
+    const account = round2(l.paid - cash);
+    let toAccount = account;
+    if (cash > 0) {
+      if (refund === 'credit') toAccount = round2(toAccount + cash);
+      else {
+        const session = requireSession();
+        db.prepare('INSERT INTO cash_movements (session_id,type,method,amount,concept,user_id) VALUES (?,?,?,?,?,?)')
+          .run(session.id, 'egreso', refund, cash, `Devolución de seña apartado #${l.id} · ${l.customer_name}`, user.id);
+      }
+    }
+    if (toAccount > 0) {
+      db.prepare('INSERT INTO account_movements (customer_id,amount,concept,user_id) VALUES (?,?,?,?)').run(l.customer_id, toAccount, `Seña del apartado #${l.id} (cancelado)`, user.id);
+    }
+    db.prepare("UPDATE layaways SET status='cancelled', cancel_note=?, closed_at=datetime('now','localtime') WHERE id=?")
+      .run(refund === 'credit' ? 'Seña pasada a saldo a favor' : `Seña devuelta (${refund})`, l.id);
+    return layawayDetail(l.id);
+  }));
 
   // Ventas en espera
   const MAX_HELD = 50;
@@ -494,7 +613,11 @@ export function createApp(db, opts = {}) {
 
   // Ventas
   // `exchange`: parte del total cubierta por mercadería devuelta (cambios).
-  function createSale(body, user, can, exchange = 0) {
+  // `extra.prepaid`: señas ya cobradas [{method, amount}] (apartado que se completa); `extra.locked`: precios fijados {article_id: price}; `extra.layawayId`: su reserva no cuenta como stock ocupado.
+  function createSale(body, user, can, exchange = 0, extra = {}) {
+    const prepaid = extra.prepaid || [];
+    const prepaidAcc = extra.prepaidAccount || 0; // parte de la seña pagada con saldo a favor (ya descontado de la cuenta)
+    const prepaidTotal = round2(prepaid.reduce((s, p) => s + p.amount, 0) + prepaidAcc);
     const items = Array.isArray(body.items) ? body.items : [];
     if (!items.length) throw bad('La venta no tiene artículos');
     const payments = (Array.isArray(body.payments) ? body.payments : []).map((p) => {
@@ -502,7 +625,7 @@ export function createApp(db, opts = {}) {
       return { method: p.method, amount: num(p.amount, 'Monto de pago') };
     }).filter((p) => p.amount > 0);
     const accountAmount = round2(num(body.account_amount ?? 0, 'Monto de cuenta corriente'));
-    if (!payments.length && accountAmount <= 0 && !exchange) throw bad('Indicá el medio de pago');
+    if (!payments.length && accountAmount <= 0 && !exchange && !prepaidTotal) throw bad('Indicá el medio de pago');
     const discountPct = num(body.discount_pct ?? 0, 'Descuento');
     if (discountPct > 100) throw bad('Descuento inválido');
 
@@ -518,7 +641,10 @@ export function createApp(db, opts = {}) {
       for (const [id, qty] of wanted) {
         const a = db.prepare(`${ART} WHERE a.id=? AND a.active=1`).get(id);
         if (!a) throw new HttpError(404, `Artículo ${id} no encontrado`);
-        if (a.stock < qty) throw new HttpError(409, `Stock insuficiente de "${a.name}" ${a.size} (hay ${a.stock})`);
+        const mine = extra.layawayId ? (db.prepare("SELECT COALESCE(SUM(qty),0) AS q FROM layaway_items WHERE layaway_id=? AND article_id=?").get(extra.layawayId, id).q) : 0;
+        const available = a.stock - (a.reserved - mine);
+        if (available < qty) throw new HttpError(409, `Stock insuficiente de "${a.name}" ${a.size} (hay ${Math.max(available, 0)}${a.reserved - mine > 0 ? `, ${a.reserved - mine} apartado${a.reserved - mine === 1 ? '' : 's'} para otros clientes` : ''})`);
+        if (extra.locked?.[id] !== undefined) a.price = extra.locked[id]; // precio fijado en el apartado
         lines.push({ a, qty });
         subtotal += a.price * qty;
       }
@@ -540,7 +666,7 @@ export function createApp(db, opts = {}) {
           throw bad(balance > 0 ? `El saldo a favor del cliente es ${money(balance)}` : 'El cliente no tiene saldo a favor');
         }
       }
-      const paid = round2(payments.reduce((s, p) => s + p.amount, 0) + accountAmount + exchange);
+      const paid = round2(payments.reduce((s, p) => s + p.amount, 0) + accountAmount + exchange + prepaidTotal);
       if (paid < total) throw bad(`Falta cobrar ${round2(total - paid).toFixed(2)}`);
       let change = round2(paid - total);
       if (change > 0) {
@@ -554,8 +680,8 @@ export function createApp(db, opts = {}) {
       const customerName = customer ? customer.name : String(body.customer_name ?? '').trim().slice(0, 120);
       const customerDoc = customer ? customer.doc : String(body.customer_doc ?? '').trim().slice(0, 30);
       const { lastInsertRowid: saleId } = db.prepare(
-        'INSERT INTO sales (session_id,subtotal,discount,total,user_id,customer_name,customer_doc,customer_id,account_amount,exchange_amount) VALUES (?,?,?,?,?,?,?,?,?,?)')
-        .run(session.id, subtotal, discount, total, user.id, customerName, customerDoc, customer?.id ?? null, accountAmount, exchange);
+        'INSERT INTO sales (session_id,subtotal,discount,total,user_id,customer_name,customer_doc,customer_id,account_amount,exchange_amount,prepaid_amount) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+        .run(session.id, subtotal, discount, total, user.id, customerName, customerDoc, customer?.id ?? null, round2(accountAmount + prepaidAcc), exchange, prepaidTotal);
       if (accountAmount > 0) {
         db.prepare('INSERT INTO account_movements (customer_id,amount,concept,sale_id,user_id) VALUES (?,?,?,?,?)')
           .run(customer.id, -accountAmount, `Venta #${saleId}`, saleId, user.id);
@@ -567,12 +693,15 @@ export function createApp(db, opts = {}) {
         moveStock(a.id, -qty, 'venta', saleId, user.id);
       }
       if (body.held_id) db.prepare('DELETE FROM held_sales WHERE id=?').run(body.held_id); // la venta en espera ya se cobró
+      for (const p of prepaid) { // la plata ya entró a la caja el día de la seña: solo se registra con qué medio se pagó
+        db.prepare('INSERT INTO sale_payments (sale_id,method,amount) VALUES (?,?,?)').run(saleId, p.method, p.amount);
+      }
       for (const p of finalPayments) {
         db.prepare('INSERT INTO sale_payments (sale_id,method,amount) VALUES (?,?,?)').run(saleId, p.method, p.amount);
         db.prepare('INSERT INTO cash_movements (session_id,type,method,amount,concept,sale_id,user_id) VALUES (?,?,?,?,?,?,?)')
           .run(session.id, 'ingreso', p.method, p.amount, `Venta #${saleId}`, saleId, user.id);
       }
-      return { status: 201, data: { id: saleId, subtotal, discount, total, change, account_amount: accountAmount, exchange_amount: exchange, payments: finalPayments } };
+      return { status: 201, data: { id: saleId, subtotal, discount, total, change, account_amount: accountAmount, exchange_amount: exchange, prepaid_amount: prepaidTotal, payments: finalPayments } };
     });
   }
   route('POST', '/api/sales', 'ventas.cobrar', ({ body, user, can }) => createSale(body, user, can));
@@ -629,7 +758,7 @@ export function createApp(db, opts = {}) {
   });
   route('POST', '/api/returns', 'ventas.devolver', ({ body, user, can }) => tx(db, () => {
     const session = requireSession();
-    const sale = db.prepare('SELECT * FROM sales WHERE id=?').get(body.sale_id);
+    const sale = db.prepare('SELECT * FROM sales WHERE id=?').get(Number(body.sale_id) || 0);
     if (!sale) throw new HttpError(404, 'Venta no encontrada');
     if (sale.voided) throw new HttpError(409, 'La venta está anulada');
     const asked = Array.isArray(body.items) ? body.items : [];

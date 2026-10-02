@@ -53,6 +53,7 @@ const can = (p) => !!me?.user?.permissions.includes(p);
 const canAny = (...ps) => ps.some(can);
 const guard = (fn) => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message, true); } };
 const debounce = (fn, ms = 250) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
+const avail = (a) => a.stock - (a.reserved || 0); // lo apartado con seña no se puede vender a otro
 const articleLabel = (a) => [a.brand, a.name, a.size && `Talle ${a.size}`, a.color].filter(Boolean).join(' · ');
 
 // ---------- Pestañas ----------
@@ -126,7 +127,7 @@ function beep(ok = true) {
 function addToCart(a) {
   const line = cart.find((l) => l.a.id === a.id);
   const qty = (line?.qty || 0) + 1;
-  if (qty > a.stock) { beep(false); $('#lastScan').innerHTML = `<span class="neg">Sin stock suficiente de ${esc(articleLabel(a))} (hay ${a.stock})</span>`; return toast(`Sin stock suficiente de ${articleLabel(a)} (hay ${a.stock})`, true); }
+  if (qty > avail(a)) { beep(false); const m = `Sin stock suficiente de ${articleLabel(a)} (hay ${Math.max(avail(a), 0)}${a.reserved ? `; ${a.reserved} apartado${a.reserved === 1 ? '' : 's'} con seña` : ''})`; $('#lastScan').innerHTML = `<span class="neg">${esc(m)}</span>`; return toast(m, true); }
   if (line) line.qty = qty; else cart.push({ a, qty: 1 });
   renderCart();
   beep(true);
@@ -138,7 +139,7 @@ $('#cart').addEventListener('click', (e) => {
   if (q) {
     const [i, d] = q.split(':').map(Number), l = cart[i];
     const n = l.qty + d;
-    if (n < 1) cart.splice(i, 1); else if (n > l.a.stock) return toast('Sin stock suficiente', true); else l.qty = n;
+    if (n < 1) cart.splice(i, 1); else if (n > avail(l.a)) return toast('Sin stock suficiente', true); else l.qty = n;
     renderCart();
   } else if (rm !== undefined) { cart.splice(Number(rm), 1); renderCart(); }
 });
@@ -192,7 +193,7 @@ $('#heldBar').addEventListener('click', guard(async (e) => {
   const h = await api('GET', '/held/' + resume);
   resetSale();
   let capped = false;
-  cart = h.items.map((i) => { const qty = Math.min(i.qty, i.article.stock); if (qty < i.qty) capped = true; return { a: i.article, qty }; }).filter((l) => l.qty > 0);
+  cart = h.items.map((i) => { const qty = Math.min(i.qty, avail(i.article)); if (qty < i.qty) capped = true; return { a: i.article, qty }; }).filter((l) => l.qty > 0);
   $('#discount').value = h.discount_pct;
   saleCustomer = h.customer ? { id: h.customer.id, name: h.customer.name, doc: h.customer.doc, balance: h.customer.balance } : h.customer_name ? { name: h.customer_name } : null;
   heldId = h.id; renderCustomerChip(); renderCart();
@@ -214,7 +215,7 @@ function renderCustomerChip() {
     <span class="grow"></span>${c.id && can('clientes.cuenta') ? '<button type="button" class="ghost" id="custSena">Cargar seña</button>' : ''}<button type="button" class="link" id="custClear" title="Quitar cliente">✕</button>`;
   updateChange();
 }
-function setSaleCustomer(c) { saleCustomer = c; renderCustomerChip(); $('#scan').focus(); }
+function setSaleCustomer(c) { saleCustomer = c; accountAsked = false; renderCustomerChip(); $('#scan').focus(); }
 const custSearch = debounce(guard(async () => {
   const q = $('#custSearch').value.trim();
   if (!q) { $('#custResults').innerHTML = ''; return; }
@@ -247,7 +248,7 @@ async function refreshSaleCustomer() {
   if (c) { saleCustomer.balance = c.balance; renderCustomerChip(); }
 }
 function resetSale() {
-  cart = []; heldId = null; $('#discount').value = 0; saleCustomer = null; renderCustomerChip();
+  cart = []; heldId = null; accountAsked = false; $('#discount').value = 0; saleCustomer = null; renderCustomerChip();
   ['Efectivo', 'Tarjeta', 'Transferencia'].forEach((m) => ($('#pay' + m).value = ''));
   renderCart(); $('#results').innerHTML = ''; $('#scan').value = ''; $('#scan').focus();
 }
@@ -255,7 +256,7 @@ $('#clearCart').addEventListener('click', resetSale);
 
 async function searchInto(box, q, onPick) {
   const list = q ? await api('GET', '/articles?q=' + encodeURIComponent(q)) : [];
-  box.innerHTML = list.map((a) => `<div class="item" data-id="${a.id}"><span>${esc(articleLabel(a))}</span><span>${money(a.price)} · stock ${a.stock}</span></div>`).join('');
+  box.innerHTML = list.map((a) => `<div class="item" data-id="${a.id}"><span>${esc(articleLabel(a))}</span><span>${money(a.price)} · stock ${a.stock}${a.reserved ? ` · ${a.reserved} apartado${a.reserved === 1 ? '' : 's'}` : ''}</span></div>`).join('');
   box.onclick = (e) => { const el = e.target.closest('.item'); if (el) onPick(list.find((a) => a.id == el.dataset.id)); };
   return list;
 }
@@ -302,9 +303,50 @@ document.addEventListener('keydown', (e) => {
 $('#posBox').addEventListener('click', (e) => { if (e.target.closest('button') && !$('dialog[open]')) setTimeout(() => $('#scan').focus(), 0); });
 $('#scan').addEventListener('input', () => ($('#lastScan').textContent = ''));
 
+// Cliente con deuda o con saldo a favor: antes de cobrar se pregunta qué hacer (una vez por venta).
+let accountAsked = false;
+function payDebtNow(c, owed) {
+  return new Promise((resolve) => {
+    let paid = false;
+    const opened = openPayDialog({ mode: 'deuda', customer: { ...c, balance: -owed }, done: async () => { paid = true; await refreshSaleCustomer(); resolve(true); } });
+    if (!opened) return resolve(false);
+    $('#payDialog').addEventListener('close', () => { if (!paid) resolve(false); }, { once: true });
+  });
+}
+async function resolveCustomerAccount() {
+  const c = saleCustomer;
+  if (!c?.id || accountAsked) return true;
+  await refreshSaleCustomer();
+  const total = cartTotals().total;
+  if (c.balance < 0) {
+    const owed = -c.balance;
+    const choice = await ask({
+      title: `${c.name} tiene una deuda`, stack: true,
+      text: `Debe ${money(owed)} y se lleva ${money(total)} ahora. ¿Qué querés hacer?`,
+      buttons: [
+        can('clientes.cuenta') ? { label: `Cobrar la deuda (${money(owed)}) y después esta compra`, value: 'pay', kind: 'primary' } : null,
+        can('clientes.fiar') ? { label: `Sumar esta compra a la deuda (pasaría a deber ${money(owed + total)})`, value: 'add', kind: 'ghost' } : null,
+        { label: 'Dejar una seña y apartar la mercadería', value: 'lay', kind: 'ghost' },
+        { label: 'Cobrar solo esta compra (la deuda sigue)', value: 'only', kind: can('clientes.cuenta') ? 'ghost' : 'primary' },
+        { label: 'Volver', value: null, kind: 'ghost', cancel: true },
+      ].filter(Boolean),
+    });
+    if (!choice) return false;
+    if (choice === 'lay') { openLayawayDialog(); return false; }
+    if (choice === 'pay' && !(await payDebtNow(c, owed))) return false;
+    if (choice === 'add') { ['Efectivo', 'Tarjeta', 'Transferencia'].forEach((m) => ($('#pay' + m).value = '')); $('#payCuenta').value = total; updateChange(); }
+  } else if (c.balance > 0 && !accountEntered()) {
+    if (await uiConfirm(`${c.name} tiene ${money(c.balance)} a favor. ¿Lo usás en esta compra?`, { title: 'Saldo a favor', ok: 'Usar el saldo', cancel: 'No usarlo' })) {
+      $('#payCuenta').value = Math.min(c.balance, total); updateChange();
+    }
+  }
+  accountAsked = true;
+  return true;
+}
 $('#charge').addEventListener('click', guard(async () => {
   if (!cart.length) throw new Error('La venta está vacía');
   if (!cash) throw new Error('Abrí la caja antes de vender');
+  if (!(await resolveCustomerAccount())) return;
   const payments = paymentsEntered();
   const { total } = cartTotals();
   if (!payments.length && !accountEntered()) payments.push({ method: 'efectivo', amount: total }); // por defecto: efectivo exacto
@@ -373,6 +415,9 @@ async function openCustomerDetail(id) {
     if (a === 'toggle') { await api('PUT', '/customers/' + c.id, { active: !c.active }); toast(c.active ? 'Cliente dado de baja' : 'Cliente reactivado'); return done(); }
     openPayDialog({ mode: a, customer: c, done });
   });
+  const lays = can('ventas.cobrar') || can('clientes.ver') ? await api('GET', '/layaways?customer_id=' + c.id) : [];
+  $('#cdLay').hidden = !lays.length;
+  $('#cdLayTable tbody').innerHTML = lays.map((l) => layRow(l, {})).join('');
   $('#cdMovs tbody').innerHTML = c.movements.map((m) => `<tr><td>${esc(m.created_at.slice(0, 16))}</td><td>${esc(m.concept)}${m.method ? ` <small class="muted">(${esc(m.method)})</small>` : ''}</td>
     <td class="num ${m.amount > 0 ? 'pos' : 'neg'}">${m.amount > 0 ? '+' : ''}${money(m.amount)}</td><td>${esc(m.user_name || '')}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">Sin movimientos</td></tr>';
   $('#cdSales tbody').innerHTML = c.sales.map((v) => `<tr style="${v.voided ? 'opacity:.5;text-decoration:line-through' : ''}"><td>${v.id}</td><td>${esc(v.created_at.slice(0, 16))}</td>
@@ -382,7 +427,7 @@ async function openCustomerDetail(id) {
 // Seña / cobro de deuda / devolución de saldo (mueven la caja y la cuenta del cliente).
 let payCtx = null;
 function openPayDialog({ mode, customer, done }) {
-  if (!cash) return toast('Abrí la caja para registrar el movimiento', true);
+  if (!cash) { toast('Abrí la caja para registrar el movimiento', true); return false; }
   payCtx = { mode, customer, done };
   const f = $('#payForm'); f.reset(); $('#payError').textContent = '';
   const T = {
@@ -394,6 +439,7 @@ function openPayDialog({ mode, customer, done }) {
   if (mode === 'deuda') f.elements.amount.value = -customer.balance;
   if (mode === 'payout') f.elements.amount.value = customer.balance;
   $('#payDialog').showModal(); f.elements.amount.focus();
+  return true;
 }
 $('#payCancel').addEventListener('click', () => $('#payDialog').close());
 $('#payForm').addEventListener('submit', async (e) => {
@@ -402,7 +448,7 @@ $('#payForm').addEventListener('submit', async (e) => {
   try {
     const path = `/customers/${customer.id}/${mode === 'payout' ? 'payout' : 'payment'}`;
     await api('POST', path, { amount: Number(f.amount.value), method: f.method.value, concept: { sena: 'Seña / adelanto', deuda: 'Pago de deuda' }[mode] });
-    $('#payDialog').close(); toast('Movimiento registrado'); await refreshCash(); if (done) await done();
+    toast('Movimiento registrado'); await refreshCash(); if (done) await done(); $('#payDialog').close();
   } catch (err) { $('#payError').textContent = err.message; }
 });
 
@@ -414,7 +460,7 @@ async function loadArticles() {
   $('#artTable tbody').innerHTML = rows.map((a) => `
     <tr><td>${esc(a.barcode || '—')}</td><td>${esc(a.brand || '—')}</td><td>${esc(a.name)}</td><td>${esc(a.category)}</td><td>${esc(a.size)}</td><td>${esc(a.color)}</td>
     <td class="num">${money(a.price)}</td><td class="num col-cost">${money(a.cost)}</td>
-    <td class="num ${a.stock <= a.min_stock ? 'low' : ''}">${a.stock}</td>
+    <td class="num ${a.stock <= a.min_stock ? 'low' : ''}">${a.stock}${a.reserved ? `<br><small class="muted">${a.reserved} apartado${a.reserved === 1 ? '' : 's'}</small>` : ''}</td>
     <td>${can('articulos.editar') ? `<button class="link" data-edit="${a.id}">Editar</button>` : ''}<button class="link" data-lbl="${a.id}">Etiqueta</button>${can('articulos.editar') ? `<button class="link" data-del="${a.id}">Baja</button>` : ''}</td></tr>`).join('')
     || '<tr><td colspan="10" class="muted">Sin artículos</td></tr>';
   window._arts = rows;
@@ -710,7 +756,12 @@ async function loadCash() {
       $('#cashMovTable tbody').innerHTML = movs.map((x) => `<tr><td>${time(x.created_at)}</td><td class="${x.type === 'ingreso' ? 'pos' : 'neg'}">${x.type}</td><td>${x.method}</td><td class="num">${money(x.amount)}</td><td>${esc(x.concept)}</td><td>${esc(x.user_name || '')}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Sin movimientos</td></tr>';
     }
   }
-  if (can('ventas.cobrar')) await loadHeld();
+  if (can('ventas.cobrar')) {
+    await loadHeld();
+    const lays = await api('GET', '/layaways');
+    $('#layBox').hidden = !lays.length;
+    $('#layTable tbody').innerHTML = lays.map((l) => layRow(l, { cust: true, date: true })).join('');
+  }
   const day = $('#salesDate').value || today();
   const sales = await api('GET', '/sales?date=' + day);
   $('#salesTable tbody').innerHTML = sales.map((s) => `<tr style="${s.voided ? 'opacity:.5;text-decoration:line-through' : ''}"><td>${compNumber(s)}</td><td>${time(s.created_at)}</td><td>${esc(s.seller || '')}${s.customer_name ? `<br><small class="muted">Cliente: ${esc(s.customer_name)}</small>` : ''}</td>
@@ -771,6 +822,93 @@ $('#salesTable').addEventListener('click', guard(async (e) => {
   }
 }));
 
+// ---------- Apartados (señas) ----------
+let layCtx = null; // { customer, lines }
+const layTotal = () => Math.round(cart.reduce((sum, l) => sum + l.a.price * l.qty, 0) * 100) / 100;
+function openLayawayDialog() {
+  if (!cart.length) return toast('Cargá primero la mercadería que se aparta', true);
+  if (!saleCustomer?.id) { toast('Elegí o creá el cliente que deja la seña', true); return $('#custSearch').focus(); }
+  if (!cash) return toast('Abrí la caja para cobrar la seña', true);
+  const total = layTotal();
+  layCtx = { customer: saleCustomer };
+  $('#layInfo').textContent = `Cliente: ${saleCustomer.name}${saleCustomer.doc ? ` · ${saleCustomer.doc}` : ''}`;
+  $('#layItems tbody').innerHTML = cart.map((l) => `<tr><td>${esc(articleLabel(l.a))}</td><td class="num">${l.qty}</td><td class="num">${money(l.a.price * l.qty)}</td></tr>`).join('');
+  const opt = $('#layMethod option[value="cuenta"]'); opt.hidden = !(saleCustomer.balance > 0);
+  $('#layMethod').value = 'efectivo'; $('#layNote').value = ''; $('#layError').textContent = '';
+  $('#layAmount').value = ''; $('#layAmount').max = total;
+  layRefresh();
+  $('#layDialog').showModal(); $('#layAmount').focus();
+}
+function layRefresh() {
+  const total = layTotal(), dep = Number($('#layAmount').value) || 0, rest = Math.round((total - dep) * 100) / 100;
+  $('#laySummary').innerHTML = `Total <b>${money(total)}</b> · ${dep > 0 ? (rest <= 0 ? '<b class="pos">Paga todo: se entrega ahora</b>' : `Deja <b>${money(dep)}</b> · Faltan <b class="neg">${money(rest)}</b>`) : 'Indicá cuánto deja de seña'}
+    <br><small class="muted">La mercadería queda apartada (nadie más puede venderla). Al completar el pago se entrega, sale del stock y se cierra el apartado. El precio queda fijo hoy.</small>`;
+}
+$('#layAmount').addEventListener('input', layRefresh);
+$('#layaway').addEventListener('click', openLayawayDialog);
+$('#layCancelBtn').addEventListener('click', () => $('#layDialog').close());
+$('#layForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    const r = await api('POST', '/layaways', {
+      customer_id: layCtx.customer.id, items: cart.map((l) => ({ article_id: l.a.id, qty: l.qty })),
+      deposit: { amount: Number($('#layAmount').value), method: $('#layMethod').value }, note: $('#layNote').value,
+    });
+    $('#layDialog').close();
+    if (heldId) await api('DELETE', '/held/' + heldId).catch(() => {});
+    resetSale(); await refreshCash(); await loadCash();
+    if (r.sale) { toast('Pagó todo: venta registrada'); const full = (await api('GET', '/sales')).find((x) => x.id === r.sale.id); if (full) printTicket({ ...full, change: 0 }); }
+    else { toast(`Apartado #${r.id}: dejó ${money(r.paid)}, faltan ${money(r.remaining)}`); printLayaway(r); }
+  } catch (err) { $('#layError').textContent = err.message; }
+});
+
+let layPaying = null;
+async function openLayPay(id) {
+  const l = await api('GET', '/layaways/' + id);
+  layPaying = l;
+  $('#layPayTitle').textContent = `Cobrar apartado #${l.id}`;
+  $('#layPayInfo').textContent = `${l.customer_name} · Total ${money(l.total)} · Ya pagó ${money(l.paid)} · Falta ${money(l.remaining)}`;
+  $('#layPayAmount').value = l.remaining; $('#layPayAmount').max = l.remaining;
+  $('#layPayMethod option[value="cuenta"]').hidden = !(l.customer_balance > 0); $('#layPayMethod').value = 'efectivo';
+  $('#layPayHint').textContent = 'Si paga todo lo que falta, el apartado se completa: se entrega, sale del stock y queda cerrado.';
+  $('#layPayError').textContent = '';
+  $('#layPayDialog').showModal(); $('#layPayAmount').select();
+}
+$('#layPayCancel').addEventListener('click', () => $('#layPayDialog').close());
+$('#layPayForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    const r = await api('POST', `/layaways/${layPaying.id}/payment`, { amount: Number($('#layPayAmount').value), method: $('#layPayMethod').value });
+    $('#layPayDialog').close(); await refreshCash();
+    if (r.sale) {
+      toast('Apartado completado: se entregó y se descontó del stock');
+      const full = (await api('GET', '/sales')).find((x) => x.id === r.sale.id); if (full) printTicket({ ...full, change: 0 });
+    } else { toast(`Pago registrado. Faltan ${money(r.remaining)}`); printLayaway(r); }
+    await loadCash(); if ($('#cliDetail').open) await openCustomerDetail(r.customer_id);
+  } catch (err) { $('#layPayError').textContent = err.message; }
+});
+async function cancelLayaway(id) {
+  const l = await api('GET', '/layaways/' + id);
+  const choice = await ask({
+    title: `Cancelar el apartado #${l.id}`, stack: true,
+    text: `${l.customer_name} había dejado ${money(l.paid)}. La mercadería vuelve a estar disponible. ¿Qué se hace con la seña?`,
+    buttons: [{ label: 'Devolverla en efectivo', value: 'efectivo', kind: 'primary' }, { label: 'Devolverla por transferencia', value: 'transferencia', kind: 'ghost' },
+      { label: 'Dejarla como saldo a favor del cliente', value: 'credit', kind: 'ghost' }, { label: 'No cancelar', value: null, kind: 'ghost', cancel: true }],
+  });
+  if (!choice) return;
+  await api('POST', `/layaways/${id}/cancel`, { refund: choice });
+  toast('Apartado cancelado'); await refreshCash(); await loadCash(); if ($('#cliDetail').open) await openCustomerDetail(l.customer_id);
+}
+const layRow = (l, cols) => `<tr><td>${String(l.id).padStart(5, '0')}</td>${cols.cust ? `<td><b>${esc(l.customer_name)}</b><br><small class="muted">${esc(l.customer_phone || '')}</small></td>` : ''}
+  <td>${l.items.map((i) => `${i.qty}× ${esc(i.name)}`).join('<br>')}</td><td class="num">${money(l.total)}</td><td class="num">${money(l.paid)}</td><td class="num neg">${money(l.remaining)}</td>
+  ${cols.date ? `<td>${esc(l.created_at.slice(0, 10))}</td>` : ''}<td><button class="link" data-laypay="${l.id}">Cobrar</button><button class="link" data-layprint="${l.id}">Imprimir</button>${can('ventas.devolver') ? `<button class="link" data-laycancel="${l.id}">Cancelar</button>` : ''}</td></tr>`;
+document.addEventListener('click', guard(async (e) => {
+  const d = e.target.dataset;
+  if (d.laypay) return openLayPay(d.laypay);
+  if (d.laycancel) return cancelLayaway(d.laycancel);
+  if (d.layprint) return printLayaway(await api('GET', '/layaways/' + d.layprint));
+}));
+
 // ---------- Cambios y devoluciones ----------
 const returnResolution = (r) => [
   r.exchange_amount ? `Cubre ${money(r.exchange_amount)} de la prenda nueva` : '',
@@ -827,13 +965,13 @@ $('#retItems').addEventListener('input', (e) => {
   renderReturn(); $(`#retItems [data-rb="${id}"]`).focus();
 });
 $('#retNew').addEventListener('click', (e) => {
-  if (e.target.dataset.rq) { const [k, d] = e.target.dataset.rq.split(':').map(Number), l = ret.fresh[k]; l.qty += d; if (l.qty < 1) ret.fresh.splice(k, 1); else if (l.qty > l.a.stock) { l.qty = l.a.stock; toast('Sin stock suficiente', true); } }
+  if (e.target.dataset.rq) { const [k, d] = e.target.dataset.rq.split(':').map(Number), l = ret.fresh[k]; l.qty += d; if (l.qty < 1) ret.fresh.splice(k, 1); else if (l.qty > avail(l.a)) { l.qty = avail(l.a); toast('Sin stock suficiente', true); } }
   if (e.target.dataset.rrm) ret.fresh.splice(Number(e.target.dataset.rrm), 1);
   renderReturn();
 });
 function addFresh(a) {
   const l = ret.fresh.find((x) => x.a.id === a.id);
-  if ((l?.qty || 0) + 1 > a.stock) return toast(`Sin stock suficiente de ${articleLabel(a)} (hay ${a.stock})`, true);
+  if ((l?.qty || 0) + 1 > avail(a)) return toast(`Sin stock suficiente de ${articleLabel(a)} (hay ${Math.max(avail(a), 0)})`, true);
   if (l) l.qty++; else ret.fresh.push({ a, qty: 1 });
   beep(true); renderReturn();
 }
@@ -1063,6 +1201,35 @@ function returnCompHtml(r, copy) {
     <div class="cf">${esc(settings.footer)}</div>
   </div>`;
 }
+// Comprobante de seña / pago de un apartado (no fiscal).
+const layLines = (l) => [...l.payments.map((p) => [`Pago ${p.created_at.slice(0, 10)} (${p.method === 'cuenta' ? 'saldo a favor' : p.method})`, money(p.amount)]),
+  ['Total pagado hasta hoy', money(l.paid)], ['Falta pagar', money(l.remaining)]];
+function layTicketHtml(l, copy) {
+  const w = { 58: '48mm', 80: '72mm' }[settings.paper] || '80mm';
+  const row = (a, b, cls = '') => `<div class="r ${cls}"><span>${a}</span><span>${b}</span></div>`;
+  return `<div class="ticket" style="width:${w}">
+    <img class="logo" src="/img/logo-tinta.png" alt="Liu Vi" style="width:${w === '48mm' ? '30mm' : '40mm'}">
+    ${settings.name ? `<div class="c b" style="font-size:14px">${esc(settings.name)}</div>` : ''}
+    <div class="c b">COMPROBANTE DE SEÑA</div><div class="c">N° A-${String(l.id).padStart(8, '0')} · ${esc((l.created_at || '').slice(0, 10))}</div>
+    <div class="c">Cliente: ${esc(l.customer_name)}</div><hr><div class="b">Mercadería apartada</div>
+    ${l.items.map((i) => `<div>${esc(i.name)}</div>` + row(`${i.qty} x ${money(i.price)}`, money(i.qty * i.price))).join('')}
+    <hr>${row('TOTAL', money(l.total), 'tot')}<hr>${layLines(l).map(([a, b]) => row(a, b)).join('')}
+    <hr><div class="c" style="font-size:10px">La mercadería queda reservada a nombre del cliente hasta completar el pago. Comprobante no válido como factura.</div>
+    ${copy ? `<div class="c b" style="font-size:10px">${copy}</div>` : ''}</div>`;
+}
+function layCompHtml(l, copy) {
+  return `<div class="comp"><div class="ch">
+    <div class="cl"><img src="/img/logo-tinta.png" alt="Liu Vi" style="width:38mm;height:auto">${settings.name ? `<b>${esc(settings.name)}</b>` : ''}${settings.info ? `<div>${esc(settings.info)}</div>` : ''}${settings.cuit ? `<div>CUIT: ${esc(settings.cuit)}</div>` : ''}</div>
+    <div class="cx"><b>X</b><small>Documento no válido como factura</small></div>
+    <div class="cr"><b>SEÑA</b><div>N° A-${String(l.id).padStart(8, '0')}</div><div>Fecha: ${esc((l.created_at || '').slice(0, 16))}</div>${l.user_name ? `<div>Atendió: ${esc(l.user_name)}</div>` : ''}<div class="copy">${copy}</div></div></div>
+    <div class="cc"><span>Cliente: <b>${esc(l.customer_name)}</b></span>${l.customer_doc ? `<span>DNI/CUIT: <b>${esc(l.customer_doc)}</b></span>` : ''}</div>
+    <table><thead><tr><th>Mercadería apartada</th><th>Cant.</th><th>Precio unit.</th><th>Subtotal</th></tr></thead><tbody>
+      ${l.items.map((i) => `<tr><td>${esc(i.name)}</td><td class="n">${i.qty}</td><td class="n">${money(i.price)}</td><td class="n">${money(i.qty * i.price)}</td></tr>`).join('')}</tbody></table>
+    <div class="ct"><div>Total: ${money(l.total)}</div>${layLines(l).map(([a, b], i, all) => `<div${i === all.length - 1 ? ' class="tot"' : ''}>${a}: ${b}</div>`).join('')}</div>
+    ${l.note ? `<div class="cf">Nota: ${esc(l.note)}</div>` : ''}
+    <div class="cf">La mercadería queda reservada a nombre del cliente hasta completar el pago. El precio queda fijo desde hoy.</div></div>`;
+}
+const printLayaway = (l) => printDocument(l, { ticket: layTicketHtml, comp: layCompHtml, count: l.items.length + l.payments.length + 4 });
 const printReturn = (r) => printDocument(r, { ticket: returnTicketHtml, comp: returnCompHtml, count: r.items.length + r.new_items.length + 4 });
 $('#lastTicket').addEventListener('click', () => (lastTicket ? printTicket(lastTicket) : toast('Todavía no hay un comprobante para reimprimir', true)));
 $('#autoTicket').checked = settings.auto;
