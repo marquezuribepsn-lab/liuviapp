@@ -1,6 +1,14 @@
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const money = (n) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 2 }).format(n || 0);
+// Ocultar números (ojo, como en Mercado Pago): Inicio y Estadísticas muestran •••• mientras esté activado. Se recuerda en esta PC.
+let hideNums = false;
+try { hideNums = localStorage.getItem('liuvi_hide_nums') === '1'; } catch { /* sin almacenamiento */ }
+const HID = '••••';
+const hv = (v) => (hideNums ? HID : v);
+const moneyH = (n) => (hideNums ? HID : money(n));
+const EYE_ON = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+const EYE_OFF = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.9 10.9 0 0 1 12 19C5 19 1 12 1 12a18.5 18.5 0 0 1 5.06-5.94"/><path d="M9.9 4.24A10.9 10.9 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const time = (s) => s.slice(11, 16);
 
@@ -1202,8 +1210,14 @@ $('#retForm').addEventListener('submit', async (e) => {
 
 // ---------- Inicio (panel) ----------
 const DAY_NAMES = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
+let lastDash = null;
 async function loadDashboard() {
-  const d = await api('GET', '/dashboard');
+  lastDash = await api('GET', '/dashboard');
+  renderDashboard();
+}
+function renderDashboard() {
+  const d = lastDash;
+  if (!d) return;
   const h = new Date().getHours();
   $('#dashHello').textContent = `${h < 12 ? 'Buen día' : h < 20 ? 'Buenas tardes' : 'Buenas noches'}, ${me.user.name.split(' ')[0]}`;
   // Avisos que conviene ver apenas se abre el sistema.
@@ -1218,32 +1232,47 @@ async function loadDashboard() {
   $('#dashAlerts').innerHTML = alerts.map(([k, t]) => `<div class="dash-alert ${k}">${esc(t)}</div>`).join('');
   const diff = d.today.yesterday ? Math.round(((d.today.total - d.today.yesterday) / d.today.yesterday) * 100) : null;
   const kpis = [
-    ['Vendido hoy', money(d.today.total), diff === null ? 'ayer sin ventas' : `${diff >= 0 ? '▲' : '▼'} ${Math.abs(diff)}% vs. ayer`],
-    ['Ventas de hoy', d.today.sales, d.today.sales ? `ticket prom. ${money(d.today.total / d.today.sales)}` : ''],
+    ['Vendido hoy', moneyH(d.today.total), diff === null ? 'ayer sin ventas' : `${diff >= 0 ? '▲' : '▼'} ${Math.abs(diff)}% vs. ayer`],
+    ['Ventas de hoy', d.today.sales, d.today.sales ? `ticket prom. ${moneyH(d.today.total / d.today.sales)}` : ''],
   ];
-  if (d.today.profit !== null) kpis.push(['Ganancia de hoy', money(d.today.profit), '']);
-  if (d.cash?.open) kpis.push(['Efectivo en caja', money(d.cash.expected_cash), `abierta ${time(d.cash.opened_at)}`]);
+  if (d.today.profit !== null) kpis.push(['Ganancia de hoy', moneyH(d.today.profit), '']);
+  if (d.cash?.open) kpis.push(['Efectivo en caja', moneyH(d.cash.expected_cash), `abierta ${time(d.cash.opened_at)}`]);
   if (d.lowStock) kpis.push(['Stock bajo', d.lowStock.count, 'artículos']);
-  if (d.debts) kpis.push(['Te deben', money(d.debts.total), `${d.debts.count} cliente${d.debts.count === 1 ? '' : 's'}`]);
-  if (d.suppliers) kpis.push(['Le debés a proveedores', money(d.suppliers.total), `${d.suppliers.count} proveedor${d.suppliers.count === 1 ? '' : 'es'}`]);
-  if (d.layaways) kpis.push(['Señas abiertas', d.layaways.count, d.layaways.count ? `faltan cobrar ${money(d.layaways.pending)}` : '']);
-  $('#dashKpis').innerHTML = kpis.map(([k, v, sub]) => `<div class="kpi"><span>${k}</span><b>${v}</b>${sub ? `<small>${esc(String(sub))}</small>` : ''}</div>`).join('');
+  if (d.debts) kpis.push(['Te deben', moneyH(d.debts.total), `${d.debts.count} cliente${d.debts.count === 1 ? '' : 's'}`]);
+  if (d.suppliers) kpis.push(['Le debés a proveedores', moneyH(d.suppliers.total), `${d.suppliers.count} proveedor${d.suppliers.count === 1 ? '' : 'es'}`]);
+  if (d.layaways) kpis.push(['Señas abiertas', d.layaways.count, d.layaways.count ? `faltan cobrar ${moneyH(d.layaways.pending)}` : '']);
+  $('#dashKpis').innerHTML = kpis.map(([k, v, sub]) => `<div class="kpi"><span>${k}</span><b>${hv(v)}</b>${sub && !(hideNums && /\d/.test(String(sub))) ? `<small>${esc(String(sub))}</small>` : ''}</div>`).join('');
   $('#dashWeekCard').hidden = $('#dashTopCard').hidden = !d.week;
   if (d.week) {
     const max = Math.max(1, ...d.week.map((x) => x.total));
-    $('#dashWeek').innerHTML = `<div class="chart small">${d.week.map((x) => `<div class="bar" title="${esc(x.day)}: ${money(x.total)}"><small>${money(x.total).replace(/\s/g, '')}</small><i style="height:${Math.round((Math.max(0, x.total) / max) * 85)}%"></i><em>${DAY_NAMES[new Date(x.day + 'T12:00').getDay()]} ${x.day.slice(8)}</em></div>`).join('')}</div><p class="muted" style="margin:8px 0 0">Total de la semana: <b>${money(d.weekTotal)}</b></p>`;
-    $('#dashTop tbody').innerHTML = d.top.map((t) => `<tr><td>${esc(t.name)}</td><td class="num">${t.units} u.</td></tr>`).join('') || '<tr><td class="muted">Todavía no hay ventas esta semana</td></tr>';
+    $('#dashWeek').innerHTML = `<div class="chart small${hideNums ? ' masked' : ''}">${d.week.map((x) => `<div class="bar" title="${esc(x.day)}: ${moneyH(x.total)}"><small>${moneyH(x.total).replace(/\s/g, '')}</small><i style="height:${Math.round((Math.max(0, x.total) / max) * 85)}%"></i><em>${DAY_NAMES[new Date(x.day + 'T12:00').getDay()]} ${x.day.slice(8)}</em></div>`).join('')}</div><p class="muted" style="margin:8px 0 0">Total de la semana: <b>${moneyH(d.weekTotal)}</b></p>`;
+    $('#dashTop tbody').innerHTML = d.top.map((t) => `<tr><td>${esc(t.name)}</td><td class="num">${hv(t.units + ' u.')}</td></tr>`).join('') || '<tr><td class="muted">Todavía no hay ventas esta semana</td></tr>';
   }
   $('#dashLowCard').hidden = !d.lowStock;
   if (d.lowStock) $('#dashLow').innerHTML = d.lowStock.items.length
-    ? `<table><tbody>${d.lowStock.items.map((a) => `<tr><td>${esc([a.name, a.size && `Talle ${a.size}`, a.color].filter(Boolean).join(' · '))}</td><td class="num">${a.stock} u.</td></tr>`).join('')}</tbody></table>${d.lowStock.count > d.lowStock.items.length ? `<p class="muted" style="margin:8px 0 0">y ${d.lowStock.count - d.lowStock.items.length} más en la pestaña Stock</p>` : ''}`
+    ? `<table><tbody>${d.lowStock.items.map((a) => `<tr><td>${esc([a.name, a.size && `Talle ${a.size}`, a.color].filter(Boolean).join(' · '))}</td><td class="num">${hv(a.stock + ' u.')}</td></tr>`).join('')}</tbody></table>${d.lowStock.count > d.lowStock.items.length ? `<p class="muted" style="margin:8px 0 0">y ${hv(d.lowStock.count - d.lowStock.items.length)} más en la pestaña Stock</p>` : ''}`
     : '<span class="muted">Nada con stock bajo 👌</span>';
   $('#dashDebtCard').hidden = !d.debts;
   if (d.debts) $('#dashDebt').innerHTML = d.debts.top.length
-    ? `<table><tbody>${d.debts.top.map((c) => `<tr><td>${esc(c.name)}</td><td class="num">${money(-c.balance)}</td></tr>`).join('')}</tbody></table>${d.debts.count > d.debts.top.length ? `<p class="muted" style="margin:8px 0 0">y ${d.debts.count - d.debts.top.length} más en Clientes</p>` : ''}`
+    ? `<table><tbody>${d.debts.top.map((c) => `<tr><td>${esc(c.name)}</td><td class="num">${moneyH(-c.balance)}</td></tr>`).join('')}</tbody></table>${d.debts.count > d.debts.top.length ? `<p class="muted" style="margin:8px 0 0">y ${d.debts.count - d.debts.top.length} más en Clientes</p>` : ''}`
     : '<span class="muted">Nadie debe nada 👌</span>';
 }
 $('#dashRefresh').addEventListener('click', guard(loadDashboard));
+function syncEyes() {
+  $$('.eyeBtn').forEach((b) => {
+    b.innerHTML = hideNums ? EYE_OFF : EYE_ON;
+    b.title = hideNums ? 'Mostrar los números' : 'Ocultar los números';
+    b.setAttribute('aria-label', b.title);
+    b.setAttribute('aria-pressed', String(hideNums));
+  });
+}
+$$('.eyeBtn').forEach((b) => b.addEventListener('click', guard(async () => {
+  hideNums = !hideNums;
+  try { localStorage.setItem('liuvi_hide_nums', hideNums ? '1' : '0'); } catch { /* sin almacenamiento */ }
+  syncEyes();
+  if (!$('#inicio').hidden) renderDashboard(); else if (!$('#stats').hidden) await loadStats();
+})));
+syncEyes();
 
 // ---------- Estadísticas ----------
 let group = 'day';
@@ -1253,15 +1282,16 @@ async function loadStats() {
   const [series, br] = await Promise.all([api('GET', '/stats/series?group=' + group), api('GET', '/stats/breakdown?group=' + group)]);
   const tot = series.reduce((a, r) => ({ sales: a.sales + r.sales, total: a.total + r.total, profit: a.profit + (r.profit || 0) }), { sales: 0, total: 0, profit: 0 });
   const showProfit = can('costos.ver');
-  $('#statKpis').innerHTML = [[`Período actual (${br.period})`, money(br.total)], ['Ventas del período', br.sales], ['Total mostrado', money(tot.total)], ...(showProfit ? [['Ganancia mostrada', money(tot.profit)]] : [])]
+  $('#statKpis').innerHTML = [[`Período actual (${br.period})`, moneyH(br.total)], ['Ventas del período', hv(br.sales)], ['Total mostrado', moneyH(tot.total)], ...(showProfit ? [['Ganancia mostrada', moneyH(tot.profit)]] : [])]
     .map(([k, v]) => `<div class="kpi"><span>${k}</span><b>${v}</b></div>`).join('');
   const max = Math.max(1, ...series.map((r) => r.total));
-  $('#chart').innerHTML = series.map((r) => `<div class="bar" title="${esc(r.period)}: ${money(r.total)}"><small>${money(r.total).replace(/\s/g, '')}</small><i style="height:${Math.round((r.total / max) * 85)}%"></i><em>${esc(group === 'day' ? r.period.slice(5) : r.period)}</em></div>`).join('') || '<span class="muted">Todavía no hay ventas</span>';
-  $('#methodTable tbody').innerHTML = br.byMethod.map((m) => `<tr><td>${esc(m.method)}</td><td class="num">${money(m.total)}</td></tr>`).join('') || '<tr><td class="muted">Sin datos</td></tr>';
-  $('#brandStatsTable tbody').innerHTML = br.byBrand.map((r) => `<tr><td>${esc(r.brand)}</td><td class="num">${r.units} u.</td><td class="num">${money(r.total)}</td>${r.profit == null ? '' : `<td class="num">${money(r.profit)} <span class="muted">gan.</span></td>`}</tr>`).join('') || '<tr><td class="muted">Sin datos</td></tr>';
-  $('#topTable tbody').innerHTML = br.topArticles.map((t) => `<tr><td>${esc(t.name)}</td><td class="num">${t.units} u.</td><td class="num">${money(t.total)}</td></tr>`).join('') || '<tr><td class="muted">Sin datos</td></tr>';
-  $('#seriesTable tbody').innerHTML = [...series].reverse().map((r) => `<tr><td>${esc(r.period)}</td><td class="num">${r.sales}</td><td class="num">${r.units}</td><td class="num">${money(r.total)}</td><td class="num">${money(r.avg_ticket)}</td><td class="num">${r.profit == null ? '—' : money(r.profit)}</td></tr>`).join('');
-  $('#sellerTable tbody').innerHTML = br.bySeller.map((v) => `<tr><td>${esc(v.seller)}</td><td class="num">${v.sales} ventas</td><td class="num">${money(v.total)}</td></tr>`).join('') || '<tr><td class="muted">Sin datos</td></tr>';
+  $('#chart').classList.toggle('masked', hideNums);
+  $('#chart').innerHTML = series.map((r) => `<div class="bar" title="${esc(r.period)}: ${moneyH(r.total)}"><small>${moneyH(r.total).replace(/\s/g, '')}</small><i style="height:${Math.round((r.total / max) * 85)}%"></i><em>${esc(group === 'day' ? r.period.slice(5) : r.period)}</em></div>`).join('') || '<span class="muted">Todavía no hay ventas</span>';
+  $('#methodTable tbody').innerHTML = br.byMethod.map((m) => `<tr><td>${esc(m.method)}</td><td class="num">${moneyH(m.total)}</td></tr>`).join('') || '<tr><td class="muted">Sin datos</td></tr>';
+  $('#brandStatsTable tbody').innerHTML = br.byBrand.map((r) => `<tr><td>${esc(r.brand)}</td><td class="num">${hv(r.units + ' u.')}</td><td class="num">${moneyH(r.total)}</td>${r.profit == null ? '' : `<td class="num">${moneyH(r.profit)} <span class="muted">gan.</span></td>`}</tr>`).join('') || '<tr><td class="muted">Sin datos</td></tr>';
+  $('#topTable tbody').innerHTML = br.topArticles.map((t) => `<tr><td>${esc(t.name)}</td><td class="num">${hv(t.units + ' u.')}</td><td class="num">${moneyH(t.total)}</td></tr>`).join('') || '<tr><td class="muted">Sin datos</td></tr>';
+  $('#seriesTable tbody').innerHTML = [...series].reverse().map((r) => `<tr><td>${esc(r.period)}</td><td class="num">${hv(r.sales)}</td><td class="num">${hv(r.units)}</td><td class="num">${moneyH(r.total)}</td><td class="num">${moneyH(r.avg_ticket)}</td><td class="num">${r.profit == null ? '—' : moneyH(r.profit)}</td></tr>`).join('');
+  $('#sellerTable tbody').innerHTML = br.bySeller.map((v) => `<tr><td>${esc(v.seller)}</td><td class="num">${hv(v.sales + ' ventas')}</td><td class="num">${moneyH(v.total)}</td></tr>`).join('') || '<tr><td class="muted">Sin datos</td></tr>';
 }
 $('#groupSeg').addEventListener('click', guard(async (e) => {
   if (!e.target.dataset.g) return;
@@ -1980,18 +2010,21 @@ function renderGoogle(g) {
 // Conectar: se abre una ventanita de Google (como «Acceder con Google»); mientras tanto esta pantalla espera el resultado.
 let gdWatch = null;
 async function connectGoogle() {
-  const w = window.open('', 'liuvi-google', 'popup=yes,width=520,height=720'); // se abre ya, dentro del clic, para que no la bloquee el navegador
+  // En la aplicación de escritorio (Electron) Google no deja iniciar sesión dentro de la ventana: se abre en el navegador de siempre.
+  const desktop = /Electron\//.test(navigator.userAgent);
+  const w = desktop ? null : window.open('', 'liuvi-google', 'popup=yes,width=520,height=720'); // se abre ya, dentro del clic, para que no la bloquee el navegador
   try {
-    const { url } = await api('POST', '/backup/google/start', { popup: !!w });
-    if (!w) { location.href = url; return; }
-    w.location.href = url;
+    const { url } = await api('POST', '/backup/google/start', { popup: !!w || desktop });
+    if (desktop) window.open(url, '_blank'); // la aplicación lo manda al navegador
+    else if (!w) { location.href = url; return; }
+    else w.location.href = url;
     clearInterval(gdWatch);
     const t0 = Date.now();
     gdWatch = setInterval(guard(async () => {
       const b = await api('GET', '/backup');
-      if (b.google?.connected || Date.now() - t0 > 5 * 60_000 || (w.closed && Date.now() - t0 > 3000)) {
+      if (b.google?.connected || Date.now() - t0 > 5 * 60_000 || (w?.closed && Date.now() - t0 > 3000)) {
         clearInterval(gdWatch);
-        try { if (b.google?.connected) w.close(); } catch { /* ya se cerró */ }
+        try { if (b.google?.connected) w?.close(); } catch { /* ya se cerró */ }
         renderBackup(b);
         if (b.google?.connected) toast('Google Drive conectado');
       }

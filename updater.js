@@ -8,7 +8,7 @@ import { readZip } from './xlsx.js';
 export const DEFAULT_REPO = { owner: 'marquezuribepsn-lab', repo: 'liuviapp', branch: 'main' };
 const CHECK_EVERY_MS = 6 * 3600_000;
 // Lo que nunca se reemplaza ni se instala desde la actualización.
-const SKIP_TOP = new Set(['test', 'installer', '.github', '.git', '.update', 'runtime', 'google-client.json', 'iniciar.bat', 'iniciar.command', '.gitignore', '.gitattributes', 'node_modules']);
+const SKIP_TOP = new Set(['test', 'installer', '.github', '.git', '.update', 'runtime', 'shell', 'electron', 'google-client.json', 'iniciar.bat', 'iniciar.command', '.gitignore', '.gitattributes', 'node_modules']);
 
 export const parseVersion = (v) => { const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(String(v || '').trim()); return m ? m.slice(1).map(Number) : null; };
 export function isNewer(latest, current) {

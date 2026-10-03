@@ -78,7 +78,7 @@
 <!-- VENTAS Y CAJA -->
 <!-- INICIO -->
 <section id="inicio" class="tab" hidden>
-  <div class="row"><h2 id="dashHello" style="margin:0;flex:1">Resumen del día</h2><button id="dashRefresh" class="ghost">Actualizar</button></div>
+  <div class="row"><h2 id="dashHello" style="margin:0;flex:1">Resumen del día</h2><button class="eyeBtn ghost" type="button"></button><button id="dashRefresh" class="ghost">Actualizar</button></div>
   <div id="dashAlerts"></div>
   <div id="dashKpis" class="kpis"></div>
   <div class="split">
@@ -538,6 +538,7 @@
     <div class="seg" id="groupSeg">
       <button data-g="day" class="active">Día</button><button data-g="week">Semana</button><button data-g="month">Mes</button><button data-g="year">Año</button>
     </div>
+    <button class="eyeBtn ghost" type="button" style="margin-left:auto"></button>
   </div>
   <div id="statKpis" class="kpis"></div>
   <div class="card"><h2 id="chartTitle">Ventas</h2><div id="chart"></div></div>

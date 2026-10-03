@@ -6,6 +6,8 @@ Set fso = CreateObject("Scripting.FileSystemObject")
 quiet = (WScript.Arguments.Count > 0)
 pidFile = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\LiuVi\liuvi.pid"
 msg = "Liu Vi no estaba abierto."
+' Primero la ventana (LiuVi.exe), si esta abierta.
+sh.Run "taskkill /F /T /IM LiuVi.exe", 0, True
 If fso.FileExists(pidFile) Then
   pid = Trim(fso.OpenTextFile(pidFile, 1).ReadAll)
   If IsNumeric(pid) Then

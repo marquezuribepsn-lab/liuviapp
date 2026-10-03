@@ -70,7 +70,7 @@ VIAddVersionKey /LANG=3082 "LegalCopyright" "Liu Vi"
 
 Function LaunchApp
   SetOutPath "$INSTDIR"
-  Exec '"$SYSDIR\wscript.exe" "$INSTDIR\liuvi.vbs"'
+  Exec '"$INSTDIR\shell\LiuVi.exe"'
 FunctionEnd
 
 ; Si Liu Vi está abierto (por ejemplo al actualizar) hay que cerrarlo antes de reemplazar sus archivos.
@@ -90,7 +90,7 @@ Section "Liu Vi (programa)" SecMain
   WriteUninstaller "$INSTDIR\desinstalar.exe"
 
   CreateDirectory "$SMPROGRAMS\Liu Vi"
-  CreateShortcut "$SMPROGRAMS\Liu Vi\Liu Vi.lnk" "$SYSDIR\wscript.exe" '"$INSTDIR\liuvi.vbs"' "$INSTDIR\liuvi.ico"
+  CreateShortcut "$SMPROGRAMS\Liu Vi\Liu Vi.lnk" "$INSTDIR\shell\LiuVi.exe" "" "$INSTDIR\liuvi.ico"
   CreateShortcut "$SMPROGRAMS\Liu Vi\Cerrar Liu Vi.lnk" "$SYSDIR\wscript.exe" '"$INSTDIR\detener.vbs"' "$INSTDIR\liuvi.ico"
   CreateShortcut "$SMPROGRAMS\Liu Vi\Desinstalar Liu Vi.lnk" "$INSTDIR\desinstalar.exe"
 
@@ -110,12 +110,12 @@ SectionEnd
 
 Section "Acceso directo en el escritorio" SecDesktop
   SetOutPath "$INSTDIR"
-  CreateShortcut "$DESKTOP\Liu Vi.lnk" "$SYSDIR\wscript.exe" '"$INSTDIR\liuvi.vbs"' "$INSTDIR\liuvi.ico"
+  CreateShortcut "$DESKTOP\Liu Vi.lnk" "$INSTDIR\shell\LiuVi.exe" "" "$INSTDIR\liuvi.ico"
 SectionEnd
 
 Section /o "Abrir Liu Vi automáticamente al encender Windows" SecStartup
   SetOutPath "$INSTDIR"
-  CreateShortcut "$SMSTARTUP\Liu Vi.lnk" "$SYSDIR\wscript.exe" '"$INSTDIR\liuvi.vbs"' "$INSTDIR\liuvi.ico"
+  CreateShortcut "$SMSTARTUP\Liu Vi.lnk" "$INSTDIR\shell\LiuVi.exe" "" "$INSTDIR\liuvi.ico"
 SectionEnd
 
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
@@ -131,6 +131,7 @@ Section "Uninstall"
   Delete "$SMSTARTUP\Liu Vi.lnk"
   RMDir /r "$SMPROGRAMS\Liu Vi"
   ; Solo se borra lo que instaló este programa (nunca la carpeta entera: podría ser una carpeta con otros archivos).
+  RMDir /r "$INSTDIR\shell"
   RMDir /r "$INSTDIR\runtime"
   RMDir /r "$INSTDIR\public"
   RMDir /r "$INSTDIR\scripts"

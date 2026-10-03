@@ -273,3 +273,7 @@ body.locked>footer{display:none}
 #subTabs button.subAction{margin-left:6px;border:1px solid #ffffffcc;font-weight:700;letter-spacing:.3px}
 #subTabs button.subAction:hover{background:#ffffff40}
 #offManage{margin-left:auto}
+
+/* Ojo para ocultar números */
+.eyeBtn{display:inline-flex;align-items:center;justify-content:center;padding:7px 10px !important;line-height:0}
+.chart.masked .bar i{height:30% !important;opacity:.3}
