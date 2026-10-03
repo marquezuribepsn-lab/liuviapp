@@ -4,7 +4,7 @@ Ventas, caja, stock, clientes, proveedores, ofertas, reportes y copias de seguri
 
 ## Instalación
 
-**Windows (recomendado)**: `Liu-Vi-Setup-<versión>.exe`. Es un asistente clásico (Siguiente, Siguiente…) que incluye todo lo necesario —no hace falta instalar Node.js— y crea los accesos directos «Liu Vi» (escritorio y menú Inicio). Liu Vi se abre en su propia ventana, sin ventana negra; al cerrar la ventana el programa se cierra solo (hace una última copia de seguridad si están activadas). «Cerrar Liu Vi» del menú Inicio lo cierra a la fuerza. Instalar encima de una versión anterior la actualiza y conserva todos los datos. Como el instalador no está firmado digitalmente, Windows puede mostrar un aviso de SmartScreen: *Más información → Ejecutar de todas formas*. Para generar el instalador: `installer/build.sh` (necesita `makensis`; ver el encabezado del script).
+**Windows (recomendado)**: `Liu-Vi-Setup-<versión>.exe`. Es un asistente clásico (Siguiente, Siguiente…) que incluye todo lo necesario —no hace falta instalar Node.js ni ningún navegador— y crea los accesos directos «Liu Vi» (escritorio y menú Inicio). Liu Vi es una **aplicación de escritorio** con su propia ventana (Electron): sin navegador, sin barra de direcciones y con su ícono en la barra de tareas. Al cerrar la ventana el programa se cierra solo (hace una última copia de seguridad si están activadas); «Cerrar Liu Vi» del menú Inicio lo cierra a la fuerza. Instalar encima de una versión anterior la actualiza y conserva todos los datos. Como el instalador no está firmado digitalmente, Windows puede mostrar un aviso de SmartScreen: *Más información → Ejecutar de todas formas*. Para generar el instalador: `installer/build.sh` (necesita `makensis`, `unzip`, `curl` y Python con Pillow; descarga Node y Electron la primera vez).
 
 **Windows, sin instalar**: doble clic en `iniciar.bat` (revisa que Node.js esté instalado, inicia el sistema y abre el navegador; no cierres esa ventana mientras vendés).
 
@@ -33,7 +33,7 @@ En **Copias → Actualizaciones del programa** (solo administradores, en el prog
 
 ## Funciones
 
-- **Inicio**: resumen del día —vendido hoy contra ayer, ventas, ganancia, efectivo en caja, stock bajo, lo que te deben los clientes y lo que debés a proveedores, señas abiertas—, gráfico de 7 días, más vendidos y avisos (caja cerrada, copias sin configurar o atrasadas, versión nueva).
+- **Inicio**: resumen del día (con el ojo 👁 de arriba a la derecha se ocultan los números, como en Mercado Pago; también en Estadísticas) —vendido hoy contra ayer, ventas, ganancia, efectivo en caja, stock bajo, lo que te deben los clientes y lo que debés a proveedores, señas abiertas—, gráfico de 7 días, más vendidos y avisos (caja cerrada, copias sin configurar o atrasadas, versión nueva).
 - **Ventas y caja**: pantalla de cobro con lector de código de barras, varios medios de pago por venta (efectivo, tarjeta, transferencia, cuenta del cliente), descuento y recargo (% o $), vuelto, ofertas automáticas, ventas en espera, cambios y devoluciones, anulaciones, ingresos y egresos manuales, cierre de caja con efectivo contado y diferencia, historial de cajas y comprobantes imprimibles. No se vende con la caja cerrada.
 - **Clientes**: ficha, historial de compras y **cuenta corriente** (saldo a favor o deuda), cobro de deudas, **señas con mercadería apartada** y devolución de saldo. Vender a cuenta requiere un permiso aparte.
 - **Inventario** (agrupa tres secciones):
@@ -65,6 +65,6 @@ Vender y cobrar · anular ventas · cambios y devoluciones · ver/editar cliente
 
 ## Para desarrolladores
 
-- `server.js` arranca el servidor; `app.js` tiene todas las rutas y reglas de negocio; `db.js` el esquema y las migraciones (solo suman columnas y tablas); `backup.js`, `gdrive.js`, `updater.js`, `importer.js`, `reports.js`, `xlsx.js` son módulos aparte; `public/` es la pantalla (JavaScript puro, sin frameworks; `promo.js` es el cálculo de ofertas que comparten la pantalla y el servidor).
+- `electron/main.cjs` es la ventana de escritorio (Electron): arranca `server.js` con el Node incluido, espera a que responda y lo muestra; `server.js` arranca el servidor; `app.js` tiene todas las rutas y reglas de negocio; `db.js` el esquema y las migraciones (solo suman columnas y tablas); `backup.js`, `gdrive.js`, `updater.js`, `importer.js`, `reports.js`, `xlsx.js` son módulos aparte; `public/` es la pantalla (JavaScript puro, sin frameworks; `promo.js` es el cálculo de ofertas que comparten la pantalla y el servidor).
 - `npm test` corre las pruebas (incluye pruebas de invariantes con operaciones al azar: stock, caja, cuentas y compras tienen que cerrar siempre).
 - El tema de colores está en las variables del principio de `public/style.css`; el logo, en `public/img/`.
