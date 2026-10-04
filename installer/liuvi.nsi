@@ -13,6 +13,14 @@
   !define ASSETS "assets"
 !endif
 
+!ifndef ELECTRON_VERSION
+  !define ELECTRON_VERSION "0"
+  !define ELECTRON_URL ""
+  !define ELECTRON_SHA ""
+  !define ELECTRON_MB "115"
+  !define SHELL_PS1 "get-shell.ps1"
+!endif
+
 !define APP "Liu Vi"
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\LiuVi"
 
@@ -73,6 +81,35 @@ Function LaunchApp
   Exec '"$INSTDIR\shell\LiuVi.exe"'
 FunctionEnd
 
+; Descarga la ventana de Liu Vi (Electron, ~${ELECTRON_MB} MB). Sin ella no se instala: nunca se abre en un navegador.
+Function InstallShell
+  ${If} ${FileExists} "$INSTDIR\shell\LiuVi.exe"
+  ${AndIf} ${FileExists} "$INSTDIR\shell\electron-${ELECTRON_VERSION}.txt"
+    Return ; ya está instalada esta versión
+  ${EndIf}
+  InitPluginsDir
+  File "/oname=$PLUGINSDIR\get-shell.ps1" "${SHELL_PS1}"
+  DetailPrint "Descargando la ventana de Liu Vi (unos ${ELECTRON_MB} MB; hace falta internet). Puede tardar unos minutos..."
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\get-shell.ps1" -Url "${ELECTRON_URL}" -Sha "${ELECTRON_SHA}" -Dest "$INSTDIR\shell"'
+  Pop $0
+  ${If} $0 == "0"
+  ${AndIf} ${FileExists} "$INSTDIR\shell\electron.exe"
+    Rename "$INSTDIR\shell\electron.exe" "$INSTDIR\shell\LiuVi.exe"
+    Delete "$INSTDIR\shell\resources\default_app.asar"
+    FileOpen $1 "$INSTDIR\shell\electron-${ELECTRON_VERSION}.txt" w
+    FileWrite $1 "${ELECTRON_VERSION}"
+    FileClose $1
+    DetailPrint "La ventana de Liu Vi quedó instalada."
+  ${Else}
+    RMDir /r "$INSTDIR\shell"
+    DetailPrint "No se pudo descargar la ventana de Liu Vi (código $0)."
+    ${IfNot} ${Silent}
+      MessageBox MB_OK|MB_ICONSTOP "No se pudo descargar la ventana de Liu Vi.$\r$\n$\r$\nHace falta internet solo durante la instalación (unos ${ELECTRON_MB} MB). Revisá la conexión y volvé a ejecutar este instalador: tus datos no se tocaron."
+    ${EndIf}
+    Abort "No se pudo descargar la ventana de Liu Vi. Revisá la conexión a internet y volvé a ejecutar el instalador."
+  ${EndIf}
+FunctionEnd
+
 ; Si Liu Vi está abierto (por ejemplo al actualizar) hay que cerrarlo antes de reemplazar sus archivos.
 Function StopRunning
   ${If} ${FileExists} "$INSTDIR\detener.vbs"
@@ -85,8 +122,13 @@ Section "Liu Vi (programa)" SecMain
   SectionIn RO
   Call StopRunning
   SetOutPath "$INSTDIR"
+  ; Una ventana de otra versión se reemplaza entera (se vuelve a descargar).
+  ${IfNot} ${FileExists} "$INSTDIR\shell\electron-${ELECTRON_VERSION}.txt"
+    RMDir /r "$INSTDIR\shell"
+  ${EndIf}
   File /r "${STAGE}\*.*"
   File "${ASSETS}\liuvi.ico"
+  Call InstallShell
   WriteUninstaller "$INSTDIR\desinstalar.exe"
 
   CreateDirectory "$SMPROGRAMS\Liu Vi"
