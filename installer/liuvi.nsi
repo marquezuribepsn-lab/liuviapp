@@ -88,6 +88,12 @@ Function BrandShell
   nsExec::ExecToLog '"$PLUGINSDIR\rcedit.exe" "$INSTDIR\shell\LiuVi.exe" --set-icon "$INSTDIR\liuvi.ico" --set-version-string "ProductName" "Liu Vi" --set-version-string "FileDescription" "Liu Vi" --set-version-string "InternalName" "LiuVi" --set-version-string "OriginalFilename" "LiuVi.exe" --set-version-string "CompanyName" "Liu Vi" --set-version-string "LegalCopyright" "Liu Vi"'
   Pop $0
   DetailPrint "Ícono de Liu Vi: código $0"
+  ; Windows muestra este nombre e ícono en la barra de tareas y en el menú del ícono (en vez de «Electron»).
+  WriteRegStr HKCU "Software\Classes\AppUserModelId\com.liuvi.app" "DisplayName" "Liu Vi"
+  WriteRegStr HKCU "Software\Classes\AppUserModelId\com.liuvi.app" "IconUri" "$INSTDIR\liuvi.ico"
+  ; Nombre que Windows había guardado la primera vez que corrió el .exe
+  DeleteRegValue HKCU "Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\MuiCache" "$INSTDIR\shell\LiuVi.exe.FriendlyAppName"
+  DeleteRegValue HKCU "Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\MuiCache" "$INSTDIR\shell\LiuVi.exe.ApplicationCompany"
 FunctionEnd
 
 ; Descarga la ventana de Liu Vi (Electron, ~${ELECTRON_MB} MB). Sin ella no se instala: nunca se abre en un navegador.
@@ -198,6 +204,7 @@ Section "Uninstall"
   RMDir "$INSTDIR"
   DeleteRegKey HKCU "${UNINST_KEY}"
   DeleteRegKey HKCU "Software\LiuVi"
+  DeleteRegKey HKCU "Software\Classes\AppUserModelId\com.liuvi.app"
   ; Los datos solo se borran si lo pedís expresamente (y nunca en una desinstalación silenciosa).
   ${IfNot} ${Silent}
     MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "¿Querés borrar también TUS DATOS (artículos, ventas, usuarios y las copias guardadas en esta computadora)?$\r$\n$\r$\nSi vas a volver a instalar Liu Vi, elegí NO: así lo encontrás todo como lo dejaste.$\r$\nEsto no se puede deshacer." IDNO keepdata
