@@ -19,6 +19,7 @@
   !define ELECTRON_SHA ""
   !define ELECTRON_MB "115"
   !define SHELL_PS1 "get-shell.ps1"
+  !define RCEDIT "rcedit-x64.exe"
 !endif
 
 !define APP "Liu Vi"
@@ -81,13 +82,22 @@ Function LaunchApp
   Exec '"$INSTDIR\shell\LiuVi.exe"'
 FunctionEnd
 
+; Le pone al .exe de la ventana el ícono y el nombre de Liu Vi (la barra de tareas y el administrador de tareas usan los del .exe).
+Function BrandShell
+  File "/oname=$PLUGINSDIR\rcedit.exe" "${RCEDIT}"
+  nsExec::ExecToLog '"$PLUGINSDIR\rcedit.exe" "$INSTDIR\shell\LiuVi.exe" --set-icon "$INSTDIR\liuvi.ico" --set-version-string "ProductName" "Liu Vi" --set-version-string "FileDescription" "Liu Vi" --set-version-string "InternalName" "LiuVi" --set-version-string "OriginalFilename" "LiuVi.exe" --set-version-string "CompanyName" "Liu Vi" --set-version-string "LegalCopyright" "Liu Vi"'
+  Pop $0
+  DetailPrint "Ícono de Liu Vi: código $0"
+FunctionEnd
+
 ; Descarga la ventana de Liu Vi (Electron, ~${ELECTRON_MB} MB). Sin ella no se instala: nunca se abre en un navegador.
 Function InstallShell
+  InitPluginsDir
   ${If} ${FileExists} "$INSTDIR\shell\LiuVi.exe"
   ${AndIf} ${FileExists} "$INSTDIR\shell\electron-${ELECTRON_VERSION}.txt"
-    Return ; ya está instalada esta versión
+    Call BrandShell ; ya está instalada esta versión
+    Return
   ${EndIf}
-  InitPluginsDir
   File "/oname=$PLUGINSDIR\get-shell.ps1" "${SHELL_PS1}"
   DetailPrint "Descargando la ventana de Liu Vi (unos ${ELECTRON_MB} MB; hace falta internet). Puede tardar unos minutos..."
   nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\get-shell.ps1" -Url "${ELECTRON_URL}" -Sha "${ELECTRON_SHA}" -Dest "$INSTDIR\shell"'
@@ -99,6 +109,7 @@ Function InstallShell
     FileOpen $1 "$INSTDIR\shell\electron-${ELECTRON_VERSION}.txt" w
     FileWrite $1 "${ELECTRON_VERSION}"
     FileClose $1
+    Call BrandShell
     DetailPrint "La ventana de Liu Vi quedó instalada."
   ${Else}
     RMDir /r "$INSTDIR\shell"

@@ -29,4 +29,5 @@ paste_logo(head, 'logo-tinta.png', 66, 6)
 head.save(os.path.join(out, 'header.bmp'))
 # Icono multitamaño
 fav = Image.open(os.path.join(img, 'favicon.png')).convert('RGBA')
-fav.save(os.path.join(out, 'liuvi.ico'), sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128)])
+if fav.size[0] < 256: fav = fav.resize((256, 256), Image.LANCZOS)
+fav.save(os.path.join(out, 'liuvi.ico'), sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
