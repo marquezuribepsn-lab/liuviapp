@@ -30,6 +30,11 @@ ESHA="$(curl -fsSL "https://github.com/electron/electron/releases/download/v$ELE
 EMB="$(curl -fsSIL "$EURL" | awk 'tolower($1)=="content-length:"{n=$2} END{printf "%d", n/1048576}')"; [ "${EMB:-0}" -gt 0 ] || EMB=115
 mkdir -p "$WORK/stage/shell/resources/app"
 
+# 1c. rcedit (cambia el ícono y el nombre del .exe de la ventana al instalar: sin esto la barra de tareas muestra el ícono de Electron)
+RCEDIT_SHA="3e7801db1a5edbec91b49a24a094aad776cb4515488ea5a4ca2289c400eade2a"
+if [ ! -f "$CACHE/rcedit-x64.exe" ]; then curl -fsSL "https://github.com/electron/rcedit/releases/download/v2.0.0/rcedit-x64.exe" -o "$CACHE/rcedit-x64.exe"; fi
+[ "$(sha256sum "$CACHE/rcedit-x64.exe" | cut -d' ' -f1)" = "$RCEDIT_SHA" ] || { echo "La suma de rcedit no coincide"; rm -f "$CACHE/rcedit-x64.exe"; exit 1; }
+
 # 2. El programa (lo que está en el repositorio, incluidos cambios sin guardar en git, sin pruebas ni herramientas de desarrollo)
 git ls-files -z --cached --others --exclude-standard | tar --null -T - -c | tar -x -C "$WORK/stage"
 cp electron/main.cjs electron/package.json "$WORK/stage/shell/resources/app/"
@@ -40,5 +45,5 @@ if [ -n "${GOOGLE_CLIENT_JSON:-}" ] && [ -f "$GOOGLE_CLIENT_JSON" ]; then cp "$G
 
 # 3. Imágenes y compilación
 python3 installer/make-assets.py "$WORK/assets"
-makensis -V2 -DVERSION="$VERSION" -DSTAGE="$WORK/stage" -DASSETS="$WORK/assets" -DELECTRON_VERSION="$ELECTRON_VERSION" -DELECTRON_URL="$EURL" -DELECTRON_SHA="$ESHA" -DELECTRON_MB="$EMB" -DSHELL_PS1="$PWD/installer/get-shell.ps1" -DOUTFILE="$OUT/Liu-Vi-Setup-$VERSION.exe" installer/liuvi.nsi
+makensis -V2 -DVERSION="$VERSION" -DSTAGE="$WORK/stage" -DASSETS="$WORK/assets" -DELECTRON_VERSION="$ELECTRON_VERSION" -DELECTRON_URL="$EURL" -DELECTRON_SHA="$ESHA" -DELECTRON_MB="$EMB" -DRCEDIT="$CACHE/rcedit-x64.exe" -DSHELL_PS1="$PWD/installer/get-shell.ps1" -DOUTFILE="$OUT/Liu-Vi-Setup-$VERSION.exe" installer/liuvi.nsi
 ls -la "$OUT/Liu-Vi-Setup-$VERSION.exe"
