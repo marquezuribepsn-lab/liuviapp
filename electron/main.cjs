@@ -24,7 +24,15 @@ const log = (m) => { try { fs.mkdirSync(DATA_DIR, { recursive: true }); fs.appen
 process.on('uncaughtException', (e) => log('error: ' + (e?.stack || e)));
 process.on('unhandledRejection', (e) => log('promesa rechazada: ' + (e?.stack || e)));
 
+app.setName('Liu Vi');
 app.setAppUserModelId('com.liuvi.app'); // agrupa la ventana con el acceso directo en la barra de tareas
+if (process.platform === 'win32') { // nombre e ícono que Windows muestra en la barra de tareas (en vez de «Electron»)
+  const key = 'HKCU\\Software\\Classes\\AppUserModelId\\com.liuvi.app';
+  try {
+    spawnSync('reg', ['add', key, '/v', 'DisplayName', '/d', 'Liu Vi', '/f'], { windowsHide: true });
+    if (ICON) spawnSync('reg', ['add', key, '/v', 'IconUri', '/d', ICON, '/f'], { windowsHide: true });
+  } catch { /* sin permiso: queda el nombre del ejecutable */ }
+}
 app.setPath('userData', path.join(DATA_DIR, 'ventana'));
 app.disableHardwareAcceleration(); // evita pantallas en blanco en computadoras viejas; la interfaz es liviana
 app.commandLine.appendSwitch('lang', 'es-419');
