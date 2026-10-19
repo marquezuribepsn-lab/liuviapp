@@ -114,6 +114,17 @@
         <div id="custResults" class="list"></div>
         <div id="custChip" class="custChip" hidden></div>
       </div>
+      <div id="backBox" class="backBox" hidden>
+        <div class="backHead"><b>↩ Cambio / devolución</b><button type="button" id="backToggle" class="link">＋ Agregar prenda que entra</button></div>
+        <div id="backHint" class="muted">La prenda que entra vuelve al stock y su valor se descuenta de lo que se lleva.</div>
+        <div id="backSearch" hidden>
+          <input id="backScan" autocomplete="off" placeholder="Escaneá o buscá la prenda que entra">
+          <div id="backResults" class="list"></div>
+        </div>
+        <table id="backTable" hidden><thead><tr><th>Entra</th><th>Cant.</th><th>Valor c/u</th><th>Subtotal</th><th></th></tr></thead><tbody></tbody></table>
+        <label id="backLeftBox" class="backLeft" hidden>Lo que sobra se le devuelve al cliente
+          <select id="backLeft"><option value="efectivo">En efectivo</option><option value="tarjeta">A la tarjeta</option><option value="transferencia">Por transferencia</option><option value="credit">Como saldo a favor (elegí el cliente)</option></select></label>
+      </div>
       <div class="adjRow">
         <div class="adj"><span>Descuento</span>
           <div class="adjIn"><input id="discVal" type="number" min="0" step="0.01" placeholder="0" inputmode="decimal">
@@ -127,7 +138,9 @@
         <div id="promoLine" hidden><span id="promoLabel">Ofertas</span><b id="promoShow"></b></div>
         <div id="discLine" hidden><span>Descuento</span><b id="discShow"></b></div>
         <div id="sureLine" hidden><span>Recargo</span><b id="sureShow"></b></div>
-        <div class="grand"><span>Total</span><b id="total">$0</b></div>
+        <div class="grand"><span id="totalLabel">Total</span><b id="total">$0</b></div>
+        <div id="backLine" hidden><span>Entra por cambio / devolución</span><b id="backShow"></b></div>
+        <div id="dueLine" class="grand" hidden><span id="dueLabel">A cobrar</span><b id="dueShow"></b></div>
       </div>
       <h3>Cobro</h3>
       <div id="payLines"></div>

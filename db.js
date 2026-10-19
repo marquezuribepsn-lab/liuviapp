@@ -184,7 +184,7 @@ export function openDb(path = defaultDbPath()) {
     -- Ese valor se reparte en: exchange_amount (descontado de la compra nueva), refund_cash (plata devuelta) y credit_amount (saldo a favor).
     CREATE TABLE IF NOT EXISTS returns (
       id              INTEGER PRIMARY KEY,
-      sale_id         INTEGER NOT NULL REFERENCES sales(id),
+      sale_id         INTEGER REFERENCES sales(id),         -- venta original; vacío en una devolución sin ticket
       session_id      INTEGER NOT NULL REFERENCES cash_sessions(id),
       customer_id     INTEGER REFERENCES customers(id),
       new_sale_id     INTEGER REFERENCES sales(id),
@@ -200,7 +200,7 @@ export function openDb(path = defaultDbPath()) {
     CREATE TABLE IF NOT EXISTS return_items (
       id           INTEGER PRIMARY KEY,
       return_id    INTEGER NOT NULL REFERENCES returns(id),
-      sale_item_id INTEGER NOT NULL REFERENCES sale_items(id),
+      sale_item_id INTEGER REFERENCES sale_items(id),    -- línea de la venta original; vacío en una devolución sin ticket
       article_id   INTEGER NOT NULL REFERENCES articles(id),
       name         TEXT NOT NULL,
       qty          INTEGER NOT NULL CHECK (qty > 0),
@@ -379,6 +379,40 @@ export function openDb(path = defaultDbPath()) {
     CREATE INDEX IF NOT EXISTS idx_cashmov_session ON cash_movements(session_id);
     CREATE INDEX IF NOT EXISTS idx_stockmov_article ON stock_movements(article_id);
   `);
+
+
+  // Devoluciones sin ticket: la venta y la línea de origen pasan a ser opcionales. SQLite no permite cambiar un NOT NULL,
+  // así que en las bases anteriores se reconstruyen las dos tablas (con todos sus datos) en una sola transacción.
+  const colInfo = (t, c) => db.prepare(`PRAGMA table_info(${t})`).all().find((x) => x.name === c);
+  if (colInfo('returns', 'sale_id')?.notnull === 1 || colInfo('return_items', 'sale_item_id')?.notnull === 1) {
+    db.exec('PRAGMA foreign_keys = OFF');
+    try {
+      db.exec(`BEGIN;
+        CREATE TABLE returns_new (
+          id INTEGER PRIMARY KEY, sale_id INTEGER REFERENCES sales(id), session_id INTEGER NOT NULL REFERENCES cash_sessions(id),
+          customer_id INTEGER REFERENCES customers(id), new_sale_id INTEGER REFERENCES sales(id), value REAL NOT NULL,
+          exchange_amount REAL NOT NULL DEFAULT 0, refund_cash REAL NOT NULL DEFAULT 0, refund_method TEXT, credit_amount REAL NOT NULL DEFAULT 0,
+          note TEXT NOT NULL DEFAULT '', user_id INTEGER, created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')));
+        INSERT INTO returns_new (id,sale_id,session_id,customer_id,new_sale_id,value,exchange_amount,refund_cash,refund_method,credit_amount,note,user_id,created_at)
+          SELECT id,sale_id,session_id,customer_id,new_sale_id,value,exchange_amount,refund_cash,refund_method,credit_amount,note,user_id,created_at FROM returns;
+        CREATE TABLE return_items_new (
+          id INTEGER PRIMARY KEY, return_id INTEGER NOT NULL REFERENCES returns(id), sale_item_id INTEGER REFERENCES sale_items(id),
+          article_id INTEGER NOT NULL REFERENCES articles(id), name TEXT NOT NULL, qty INTEGER NOT NULL CHECK (qty > 0), price REAL NOT NULL,
+          list_price REAL NOT NULL, cost REAL NOT NULL DEFAULT 0, brand TEXT);
+        INSERT INTO return_items_new (id,return_id,sale_item_id,article_id,name,qty,price,list_price,cost,brand)
+          SELECT id,return_id,sale_item_id,article_id,name,qty,price,list_price,cost,brand FROM return_items;
+        DROP TABLE return_items;
+        DROP TABLE returns;
+        ALTER TABLE returns_new RENAME TO returns;
+        ALTER TABLE return_items_new RENAME TO return_items;
+        CREATE INDEX IF NOT EXISTS idx_returns_sale ON returns(sale_id);
+        CREATE INDEX IF NOT EXISTS idx_returns_created ON returns(created_at);
+        COMMIT;`);
+    } catch (e) {
+      try { db.exec('ROLLBACK'); } catch { /* ya estaba deshecho */ }
+      throw e;
+    } finally { db.exec('PRAGMA foreign_keys = ON'); }
+  }
 
   // Quién hizo cada operación. ALTER para bases creadas antes de existir los usuarios.
   const ensureColumn = (table, col, type = 'INTEGER') => {

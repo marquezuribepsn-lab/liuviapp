@@ -277,3 +277,11 @@ body.locked>footer{display:none}
 /* Ojo para ocultar números */
 .eyeBtn{display:inline-flex;align-items:center;justify-content:center;padding:7px 10px !important;line-height:0}
 .chart.masked .bar i{height:30% !important;opacity:.3}
+
+/* Cambio / devolución dentro de la venta */
+.backBox{border:1px dashed var(--accent);border-radius:12px;padding:8px 12px;margin:10px 0;background:color-mix(in srgb,var(--accent) 5%,transparent)}
+.backHead{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.backBox table{margin:6px 0}
+.backBox input[data-bp]{width:100px}
+.backLeft{display:block;margin-top:6px}
+#dueLine.grand b{font-size:28px}

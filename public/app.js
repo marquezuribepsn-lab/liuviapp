@@ -114,6 +114,7 @@ async function refreshCash() {
 
 // ---------- Venta ----------
 let cart = [];
+let backIn = []; // prendas que entran por cambio / devolución: [{ a, qty, price }] (price = lo que se acredita por unidad)
 // Descuento y recargo, cada uno por porcentaje o por monto. El descuento va sobre el subtotal; el recargo, sobre lo que queda.
 const adj = { dType: 'pct', sType: 'pct' };
 const r2 = (n) => Math.round(n * 100) / 100;
@@ -144,7 +145,10 @@ const cartTotals = () => {
   const manual = Math.min(afterPromo, a.discount_amount > 0 ? a.discount_amount : r2(afterPromo * Math.min(100, a.discount_pct) / 100));
   const base = r2(afterPromo - manual);
   const surcharge = a.surcharge_amount > 0 ? a.surcharge_amount : r2(base * Math.min(100, a.surcharge_pct) / 100);
-  return { subtotal, promo, discount: manual, surcharge, total: r2(base + surcharge) };
+  const total = r2(base + surcharge);
+  const credit = r2(backIn.reduce((sum, l) => sum + l.qty * l.price, 0)); // lo que entra cubre hasta el total; si sobra, se le devuelve al cliente
+  const exchange = r2(Math.min(credit, total));
+  return { subtotal, promo, discount: manual, surcharge, total, credit, exchange, due: r2(total - exchange), left: r2(credit - exchange) };
 };
 function renderCart() {
   $('#cart tbody').innerHTML = cart.map((l, i) => `
@@ -152,7 +156,7 @@ function renderCart() {
     <td><button class="link" data-q="${i}:-1">−</button> ${l.qty} <button class="link" data-q="${i}:1">+</button></td>
     <td class="num">${money(l.a.price)}</td><td class="num">${money(l.a.price * l.qty)}</td>
     <td><button class="link" data-rm="${i}">✕</button></td></tr>`).join('') || '<tr><td colspan="5" class="muted">Escaneá un artículo para empezar</td></tr>';
-  const { subtotal, promo, discount, surcharge, total } = cartTotals();
+  const { subtotal, promo, discount, surcharge, total, credit, due, left } = cartTotals();
   $('#subtotal').textContent = money(subtotal);
   $('#promoLine').hidden = !(promo.total > 0); $('#promoShow').textContent = '− ' + money(promo.total);
   $('#promoShow').title = promo.detail.map((d) => `${d.name}: ${money(d.amount)}`).join('\n');
@@ -160,6 +164,12 @@ function renderCart() {
   $('#discLine').hidden = !(discount > 0); $('#discShow').textContent = '− ' + money(discount);
   $('#sureLine').hidden = !(surcharge > 0); $('#sureShow').textContent = '+ ' + money(surcharge);
   $('#total').textContent = money(total);
+  $('#totalLabel').textContent = credit > 0 ? 'Se lleva' : 'Total';
+  $('#backLine').hidden = !(credit > 0); $('#backShow').textContent = '− ' + money(credit);
+  $('#dueLine').hidden = !(credit > 0);
+  $('#dueLabel').textContent = left > 0 ? 'A devolver al cliente' : 'A cobrar';
+  $('#dueShow').textContent = money(left > 0 ? left : due);
+  $('#backLeftBox').hidden = !(left > 0);
   updateChange();
 }
 
@@ -177,7 +187,7 @@ function renderPayLines() {
 }
 // Con un solo medio y sin monto se cobra el total. Con varios medios cada monto es explícito (vacío = 0) para ver cuánto falta.
 function effectivePays() {
-  const total = cartTotals().total;
+  const total = cartTotals().due;
   const typed = payLines.map((l) => Math.max(0, Number(l.amount) || 0));
   if (payLines.length === 1) return [{ method: payLines[0].method, amount: typed[0] || total }];
   return payLines.map((l, i) => ({ method: l.method, amount: typed[i] }));
@@ -186,18 +196,21 @@ const paymentsEntered = () => effectivePays().filter((p) => p.method !== 'cuenta
 const accountEntered = () => (saleCustomer?.id ? r2(effectivePays().filter((p) => p.method === 'cuenta').reduce((sum, p) => sum + p.amount, 0)) : 0);
 function setPayLines(lines) { payLines = lines.length ? lines : [{ method: 'efectivo', amount: '' }]; renderPayLines(); }
 function updateChange() {
-  const { total } = cartTotals();
+  const t = cartTotals(), total = t.due;
   const eff = effectivePays();
   const paid = r2(eff.reduce((sum, p) => sum + p.amount, 0)), diff = r2(paid - total);
   const hasCash = eff.some((p) => p.method === 'efectivo' && p.amount > 0);
   // El monto que se va a cobrar se ve en gris dentro de la última línea mientras no se escribe otro.
   $$('#payLines input[data-pa]').forEach((inp) => { inp.placeholder = payLines.length === 1 ? String(eff[0]?.amount || 0) : '0'; });
   const st = $('#payStatus');
-  if (!cart.length) { st.className = 'payStatus'; st.textContent = ''; }
+  if (!cart.length && !backIn.length) { st.className = 'payStatus'; st.textContent = ''; }
+  else if (t.credit > 0 && total === 0) { st.className = 'payStatus ok'; st.textContent = t.left > 0 ? `Se le devuelven ${money(t.left)}` : 'Cambio parejo: no hay diferencia ✓'; }
   else if (diff < 0) { st.className = 'payStatus falta'; st.textContent = `Falta cobrar ${money(-diff)}`; }
   else if (diff > 0) { st.className = 'payStatus ' + (hasCash ? 'vuelto' : 'falta'); st.textContent = hasCash ? `Vuelto ${money(diff)}` : `El pago supera el total en ${money(diff)}`; }
   else { st.className = 'payStatus ok'; st.textContent = 'Pago completo ✓'; }
-  $('#charge').textContent = cart.length ? `Cobrar ${money(total)}` : 'Cobrar';
+  $('#charge').textContent = backIn.length
+    ? (cart.length ? `Registrar cambio${total > 0 ? ` · cobrar ${money(total)}` : t.left > 0 ? ` · devolver ${money(t.left)}` : ''}` : `Registrar devolución · devolver ${money(t.left)}`)
+    : (cart.length ? `Cobrar ${money(total)}` : 'Cobrar');
 }
 // Sonido corto de confirmación (agudo = agregado, grave = error): se puede cobrar sin mirar la pantalla.
 let audioCtx = null;
@@ -228,6 +241,51 @@ $('#cart').addEventListener('click', (e) => {
     renderCart();
   } else if (rm !== undefined) { cart.splice(Number(rm), 1); renderCart(); }
 });
+
+// ---------- Prendas que entran por cambio / devolución (dentro de la venta) ----------
+function renderBack() {
+  $('#backTable').hidden = !backIn.length;
+  $('#backTable tbody').innerHTML = backIn.map((l, i) => `<tr><td>${esc(articleLabel(l.a))}</td>
+    <td><button type="button" class="link" data-bq="${i}:-1">−</button> ${l.qty} <button type="button" class="link" data-bq="${i}:1">+</button></td>
+    <td><input data-bp="${i}" type="number" min="0" step="0.01" inputmode="decimal" value="${l.price}" aria-label="Valor de cada prenda que entra"></td>
+    <td class="num">${money(r2(l.qty * l.price))}</td><td><button type="button" class="link" data-brm="${i}">✕</button></td></tr>`).join('');
+  $('#backHint').hidden = backIn.length > 0;
+  renderCart();
+}
+function addBack(a) {
+  const l = backIn.find((x) => x.a.id === a.id);
+  if (l) l.qty++; else backIn.push({ a, qty: 1, price: a.price });
+  beep(true); renderBack();
+}
+$('#backToggle').addEventListener('click', () => {
+  const open = $('#backSearch').hidden;
+  $('#backSearch').hidden = !open;
+  if (open) $('#backScan').focus(); else { $('#backResults').innerHTML = ''; $('#backScan').value = ''; }
+});
+const pickBack = (a) => { addBack(a); $('#backResults').innerHTML = ''; $('#backScan').value = ''; $('#backScan').focus(); };
+$('#backScan').addEventListener('input', debounce(guard(() => searchInto($('#backResults'), $('#backScan').value.trim(), pickBack))));
+$('#backScan').addEventListener('keydown', guard(async (e) => {
+  if (e.key !== 'Enter' && !(e.key === 'Tab' && !e.shiftKey && e.target.value.trim())) return;
+  const code = e.target.value.trim(); if (!code) return;
+  e.preventDefault();
+  try { pickBack(await api('GET', '/articles/barcode/' + encodeURIComponent(code))); }
+  catch {
+    const list = await searchInto($('#backResults'), code, pickBack);
+    if (list.length === 1) pickBack(list[0]); else if (!list.length) { beep(false); toast('Código o artículo no encontrado', true); }
+  }
+}));
+$('#backTable').addEventListener('click', (e) => {
+  if (e.target.dataset.bq) { const [i, d] = e.target.dataset.bq.split(':').map(Number), l = backIn[i]; l.qty += d; if (l.qty < 1) backIn.splice(i, 1); renderBack(); }
+  else if (e.target.dataset.brm !== undefined) { backIn.splice(Number(e.target.dataset.brm), 1); renderBack(); }
+});
+$('#backTable').addEventListener('input', (e) => { // el valor se puede corregir (por ejemplo, lo que pagó el cliente); los totales se actualizan sin perder el foco
+  const i = e.target.dataset.bp; if (i === undefined) return;
+  backIn[i].price = Math.max(0, Number(e.target.value) || 0);
+  const tr = e.target.closest('tr'); tr.querySelector('.num').textContent = money(r2(backIn[i].qty * backIn[i].price));
+  renderCart();
+});
+$('#backLeft').addEventListener('change', renderCart);
+
 for (const [sel, key] of [['#discType', 'dType'], ['#sureType', 'sType']]) {
   $(sel).addEventListener('click', (e) => {
     if (!e.target.dataset.t) return;
@@ -249,7 +307,7 @@ $('#payLines').addEventListener('click', (e) => {
   if (e.target.dataset.prest !== undefined) { // este medio paga lo que no cubren los demás
     const i = Number(e.target.dataset.prest);
     const others = payLines.reduce((sum, l, k) => (k === i ? sum : sum + (Number(l.amount) || 0)), 0);
-    payLines[i].amount = String(Math.max(0, r2(cartTotals().total - others)) || '');
+    payLines[i].amount = String(Math.max(0, r2(cartTotals().due - others)) || '');
     renderPayLines();
   }
 });
@@ -291,6 +349,7 @@ async function holdCart(label) {
   });
 }
 $('#holdSale').addEventListener('click', guard(async () => {
+  if (backIn.length) throw new Error('Con una prenda que entra por cambio no se puede poner en espera: registrá el cambio o quitala');
   if (!cart.length) throw new Error('No hay nada para poner en espera');
   const label = await uiPrompt('Nombre para reconocer esta venta (opcional)', saleCustomer?.name || '', { title: 'Poner en espera', ok: 'Poner en espera' });
   if (label === null) return;
@@ -366,8 +425,9 @@ async function refreshSaleCustomer() {
   if (c) { saleCustomer.balance = c.balance; renderCustomerChip(); }
 }
 function resetSale() {
-  cart = []; heldId = null; accountAsked = false; setAdjust(); saleCustomer = null; payLines = [{ method: 'efectivo', amount: '' }]; renderCustomerChip();
-  renderCart(); $('#results').innerHTML = ''; $('#scan').value = ''; $('#scan').focus();
+  cart = []; backIn = []; heldId = null; accountAsked = false; setAdjust(); saleCustomer = null; payLines = [{ method: 'efectivo', amount: '' }]; renderCustomerChip();
+  $('#backSearch').hidden = true; $('#backScan').value = ''; $('#backResults').innerHTML = ''; $('#backLeft').value = 'efectivo';
+  renderBack(); $('#results').innerHTML = ''; $('#scan').value = ''; $('#scan').focus();
 }
 $('#clearCart').addEventListener('click', resetSale);
 
@@ -405,7 +465,7 @@ $('#scan').addEventListener('keydown', guard(async (e) => {
 let burst = null;
 document.addEventListener('keydown', (e) => {
   const f = document.activeElement;
-  if (currentTab !== 'venta' || !f || f.id === 'scan' || f.tagName !== 'INPUT' || $('dialog[open]') || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (currentTab !== 'venta' || !f || f.id === 'scan' || f.id === 'backScan' || f.tagName !== 'INPUT' || $('dialog[open]') || e.ctrlKey || e.metaKey || e.altKey) return;
   const now = performance.now();
   if (e.key.length === 1) {
     burst = burst && burst.field === f && now - burst.last < 50 ? { ...burst, text: burst.text + e.key, last: now } : { field: f, prev: f.value, text: e.key, last: now };
@@ -417,7 +477,7 @@ document.addEventListener('keydown', (e) => {
   } else burst = null;
 }, true);
 // Tras tocar un botón de la venta, el foco vuelve al campo de escaneo (así el lector siempre escribe ahí).
-$('#posBox').addEventListener('click', (e) => { if (e.target.closest('button') && !$('dialog[open]')) setTimeout(() => $('#scan').focus(), 0); });
+$('#posBox').addEventListener('click', (e) => { if (e.target.closest('button') && !e.target.closest('#backBox') && !$('dialog[open]')) setTimeout(() => $('#scan').focus(), 0); });
 $('#scan').addEventListener('input', () => ($('#lastScan').textContent = ''));
 
 // Cliente con deuda o con saldo a favor: antes de cobrar se pregunta qué hacer (una vez por venta).
@@ -458,9 +518,27 @@ async function resolveCustomerAccount() {
   accountAsked = true;
   return true;
 }
+// Cambio o devolución desde la pantalla de venta: lo que entra vuelve al stock y su valor se descuenta de lo que se lleva (si sobra, se devuelve).
+async function chargeWithReturn() {
+  if (!can('ventas.devolver')) throw new Error('No tenés permiso para hacer cambios y devoluciones');
+  if (cart.length && !(await resolveCustomerAccount())) return;
+  const t = cartTotals();
+  const method = $('#backLeft').value;
+  if (t.left > 0 && method === 'credit' && !saleCustomer?.id) throw new Error('Para dejar saldo a favor elegí un cliente');
+  const r = await api('POST', '/returns', {
+    items: backIn.map((l) => ({ article_id: l.a.id, qty: l.qty, price: l.price })),
+    new_items: cart.map((l) => ({ article_id: l.a.id, qty: l.qty })), ...adjustBody(),
+    payments: t.due > 0 ? paymentsEntered() : [], account_amount: t.due > 0 ? accountEntered() || undefined : undefined,
+    held_id: heldId || undefined, customer_id: saleCustomer?.id, leftover: t.left > 0 ? method : undefined,
+  });
+  toast(r.kind === 'cambio' ? `Cambio registrado${t.due > 0 ? ` · cobrado ${money(t.due)}` : ''}` : 'Devolución registrada');
+  resetSale(); await refreshCash(); await loadCash();
+  if ($('#autoTicket').checked) printReturn(r);
+}
 $('#charge').addEventListener('click', guard(async () => {
-  if (!cart.length) throw new Error('La venta está vacía');
+  if (!cart.length && !backIn.length) throw new Error('La venta está vacía');
   if (!cash) throw new Error('Abrí la caja antes de vender');
+  if (backIn.length) return chargeWithReturn();
   if (!(await resolveCustomerAccount())) return;
   const payments = paymentsEntered();
   const { total } = cartTotals();
@@ -918,6 +996,7 @@ async function loadCash() {
   const operar = can('caja.operar'), ver = can('caja.ver');
   $('#cajaClosed').hidden = !!cash; $('#cajaOpen').hidden = !cash;
   $('#posBox').hidden = !(cash && can('ventas.cobrar')); // sin caja abierta no se vende
+  $('#backBox').hidden = !can('ventas.devolver');
   $('#cajaKpis').hidden = !(cash && (ver || operar));
   $('#cajaEye').hidden = !(ver || operar);
   $('#openForm').hidden = !operar;
@@ -952,7 +1031,7 @@ async function loadCash() {
   const rets = await api('GET', '/returns?date=' + day);
   $('#returnsBox').hidden = !rets.length;
   window._rets = rets;
-  $('#retTable tbody').innerHTML = rets.map((r) => `<tr><td>${String(r.id).padStart(5, '0')}</td><td>${time(r.created_at)}</td><td><b>${r.kind === 'cambio' ? 'Cambio' : 'Devolución'}</b><br><small class="muted">venta ${compNumber({ id: r.sale_id })}</small></td>
+  $('#retTable tbody').innerHTML = rets.map((r) => `<tr><td>${String(r.id).padStart(5, '0')}</td><td>${time(r.created_at)}</td><td><b>${r.kind === 'cambio' ? 'Cambio' : 'Devolución'}</b><br><small class="muted">${r.sale_id ? `venta ${compNumber({ id: r.sale_id })}` : 'sin ticket'}</small></td>
     <td>${r.items.map((i) => `↩ ${i.qty}× ${esc(i.name)}`).join('<br>')}${r.new_items.length ? '<br>' + r.new_items.map((i) => `➜ ${i.qty}× ${esc(i.name)}`).join('<br>') : ''}</td>
     <td class="num">${money(r.value)}</td><td>${returnResolution(r)}</td><td><button class="link" data-rprint="${r.id}">Imprimir</button></td></tr>`).join('');
   $('#sessionsBox').hidden = !ver;
@@ -1020,6 +1099,7 @@ $('#salesTable').addEventListener('click', guard(async (e) => {
 let layCtx = null; // { customer, lines }
 const layTotal = () => Math.round(cart.reduce((sum, l) => sum + l.a.price * l.qty, 0) * 100) / 100;
 function openLayawayDialog() {
+  if (backIn.length) return toast('Con una prenda que entra por cambio no se puede apartar: registrá el cambio o quitala', true);
   if (!cart.length) return toast('Cargá primero la mercadería que se aparta', true);
   if (!saleCustomer?.id) { toast('Elegí o creá el cliente que deja la seña', true); return $('#custSearch').focus(); }
   if (!cash) return toast('Abrí la caja para cobrar la seña', true);
@@ -1766,7 +1846,7 @@ function returnTicketHtml(r, copy) {
     ${settings.cuit ? `<div class="c">CUIT ${esc(settings.cuit)}${settings.iva ? ' · ' + esc(settings.iva) : ''}</div>` : ''}
     <div class="c b">${returnTitle(r)}</div>
     <div class="c">${esc(when(r))} · N° D-${String(r.id).padStart(8, '0')}</div>
-    <div class="c">Corresponde a la venta ${compNumber({ id: r.sale_id })}</div>
+    <div class="c">${r.sale_id ? `Corresponde a la venta ${compNumber({ id: r.sale_id })}` : 'Prendas devueltas sin ticket de origen'}</div>
     ${r.customer_name ? `<div class="c">Cliente: ${esc(r.customer_name)}</div>` : ''}
     <hr><div class="b">Devuelve</div>
     ${r.items.map((i) => `<div>${esc(i.name)}</div>` + row(`${i.qty} x ${money(i.price)}`, money(i.qty * i.price))).join('')}
@@ -1786,7 +1866,7 @@ function returnCompHtml(r, copy) {
         ${settings.cuit ? `<div>CUIT: ${esc(settings.cuit)}</div>` : ''}${settings.iva ? `<div>Condición IVA: ${esc(settings.iva)}</div>` : ''}</div>
       <div class="cx"><b>X</b><small>Documento no válido como factura</small></div>
       <div class="cr"><b>${returnTitle(r).replace('COMPROBANTE DE ', '')}</b><div>N° D-${String(r.id).padStart(8, '0')}</div><div>Fecha: ${esc(when(r))}</div>
-        <div>Venta original: ${compNumber({ id: r.sale_id })}</div>${r.user_name ? `<div>Atendió: ${esc(r.user_name)}</div>` : ''}<div class="copy">${copy}</div></div>
+        <div>Venta original: ${r.sale_id ? compNumber({ id: r.sale_id }) : 'sin ticket'}</div>${r.user_name ? `<div>Atendió: ${esc(r.user_name)}</div>` : ''}<div class="copy">${copy}</div></div>
     </div>
     <div class="cc"><span>Cliente: <b>${esc(r.customer_name || 'Consumidor final')}</b></span>${r.customer_doc ? `<span>DNI/CUIT: <b>${esc(r.customer_doc)}</b></span>` : ''}</div>
     ${table('Devuelve', r.items)}${r.new_items.length ? table('Se lleva', r.new_items) : ''}
