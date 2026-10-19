@@ -122,6 +122,7 @@
           <div id="backResults" class="list"></div>
         </div>
         <table id="backTable" hidden><thead><tr><th>Entra</th><th>Cant.</th><th>Valor c/u</th><th>Subtotal</th><th></th></tr></thead><tbody></tbody></table>
+        <div class="backWhen"><label>Fecha y hora <input id="backWhen" type="datetime-local"></label><button type="button" id="backNow" class="link" hidden>Poner la actual</button></div>
         <label id="backLeftBox" class="backLeft" hidden>Lo que sobra se le devuelve al cliente
           <select id="backLeft"><option value="efectivo">En efectivo</option><option value="tarjeta">A la tarjeta</option><option value="transferencia">Por transferencia</option><option value="credit">Como saldo a favor (elegí el cliente)</option></select></label>
       </div>
@@ -794,6 +795,7 @@
         <div id="retCustResults" class="list"></div>
       </div>
     </div>
+    <div class="backWhen"><label>Fecha y hora <input id="retWhen" type="datetime-local"></label><button type="button" id="retNow" class="link" hidden>Poner la actual</button></div>
     <label>Nota (opcional) <input id="retNote" maxlength="200" placeholder="Motivo del cambio, etc."></label>
     <div id="retError" class="neg"></div>
     <div class="row end"><button type="button" id="retCancel" class="ghost">Cancelar</button><button class="primary" id="retOk">Confirmar</button></div>

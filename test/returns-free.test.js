@@ -156,3 +156,37 @@ test('migración: una base con devoluciones anteriores conserva todo y acepta de
     openDb(file).close(); // abrir otra vez no repite nada
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('fecha y hora del cambio: por defecto la actual, se puede elegir una pasada y no una futura', async () => {
+  const t = await start();
+  try {
+    const { vestido, remera, top } = await escenario(t);
+    await t.admin('POST', '/api/cash/movement', { type: 'ingreso', method: 'efectivo', amount: 50000, concept: 'Fondo' });
+    const ahora = (await ret(t, { items: [{ article_id: top.id, qty: 1 }], leftover: 'efectivo' })).data;
+    assert.ok(Math.abs(new Date(ahora.created_at.replace(' ', 'T')) - Date.now()) < 120_000, 'sin fecha usa la actual');
+
+    // cambio con fecha pasada: el comprobante, la venta nueva y el movimiento de stock llevan esa fecha
+    const r = await ret(t, { items: [{ article_id: remera.id, qty: 1, price: 6000 }], new_items: [{ article_id: vestido.id, qty: 1 }], payments: [{ method: 'efectivo', amount: 4000 }], created_at: '2025-03-10T09:30' });
+    assert.equal(r.status, 201, JSON.stringify(r.data));
+    assert.equal(r.data.created_at, '2025-03-10 09:30:00');
+    assert.equal(r.data.new_sale.created_at, '2025-03-10 09:30:00');
+    const movs = t.db.prepare("SELECT reason, created_at FROM stock_movements WHERE created_at LIKE '2025-03-10%' ORDER BY id").all();
+    assert.deepEqual(movs.map((m) => m.reason), ['devolucion', 'venta']);
+    assert.equal((await efectivo(t)) , 50000 - ahora.refund_cash + 4000, 'la plata entra y sale de la caja abierta hoy');
+    assert.equal((await t.admin('GET', '/api/returns?date=2025-03-10')).data.length, 1, 'aparece en el día elegido');
+    assert.equal((await t.admin('GET', '/api/returns')).data.length, 1, 'y no en hoy');
+
+    for (const malo of ['mañana', '2025-13-40T10:00', '1999-01-01T10:00', '2025-02-30T10:00']) {
+      assert.equal((await ret(t, { items: [{ article_id: top.id, qty: 1 }], leftover: 'efectivo', created_at: malo })).status, 400, malo);
+    }
+    const futuro = new Date(Date.now() + 86_400_000 * 2).toISOString().slice(0, 16);
+    const f = await ret(t, { items: [{ article_id: top.id, qty: 1 }], leftover: 'efectivo', created_at: futuro });
+    assert.equal(f.status, 400); assert.match(f.data.error, /futuras/);
+
+    // devolución de una venta: no puede ser anterior a la venta
+    const v = (await t.admin('POST', '/api/sales', { items: [{ article_id: vestido.id, qty: 1 }], payments: [{ method: 'efectivo', amount: 10000 }] })).data;
+    const item = (await t.admin('GET', '/api/sales')).data.find((s) => s.id === v.id).items[0];
+    const antes = await ret(t, { sale_id: v.id, items: [{ sale_item_id: item.id, qty: 1 }], leftover: 'efectivo', created_at: '2025-03-10T09:30' });
+    assert.equal(antes.status, 400); assert.match(antes.data.error, /anterior a la de la venta/);
+  } finally { t.close(); }
+});

@@ -243,6 +243,19 @@ $('#cart').addEventListener('click', (e) => {
 });
 
 // ---------- Prendas que entran por cambio / devolución (dentro de la venta) ----------
+// Fecha y hora de un cambio / devolución: siempre arranca con la actual (y se mantiene al día) y se puede cambiar; «Poner la actual» la vuelve a automática.
+const nowLocal = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
+function whenField(inputSel, nowSel) {
+  const inp = $(inputSel), btn = $(nowSel);
+  let edited = false;
+  const sync = () => { inp.max = nowLocal(); if (!edited) inp.value = inp.max; btn.hidden = !edited; };
+  inp.addEventListener('input', () => { edited = !!inp.value; sync(); });
+  btn.addEventListener('click', () => { edited = false; sync(); });
+  setInterval(sync, 20_000);
+  sync();
+  return { reset() { edited = false; sync(); }, value() { return edited ? inp.value : undefined; } };
+}
+const backWhen = whenField('#backWhen', '#backNow');
 function renderBack() {
   $('#backTable').hidden = !backIn.length;
   $('#backTable tbody').innerHTML = backIn.map((l, i) => `<tr><td>${esc(articleLabel(l.a))}</td>
@@ -426,7 +439,7 @@ async function refreshSaleCustomer() {
 }
 function resetSale() {
   cart = []; backIn = []; heldId = null; accountAsked = false; setAdjust(); saleCustomer = null; payLines = [{ method: 'efectivo', amount: '' }]; renderCustomerChip();
-  $('#backSearch').hidden = true; $('#backScan').value = ''; $('#backResults').innerHTML = ''; $('#backLeft').value = 'efectivo';
+  $('#backSearch').hidden = true; $('#backScan').value = ''; $('#backResults').innerHTML = ''; $('#backLeft').value = 'efectivo'; backWhen.reset();
   renderBack(); $('#results').innerHTML = ''; $('#scan').value = ''; $('#scan').focus();
 }
 $('#clearCart').addEventListener('click', resetSale);
@@ -529,7 +542,7 @@ async function chargeWithReturn() {
     items: backIn.map((l) => ({ article_id: l.a.id, qty: l.qty, price: l.price })),
     new_items: cart.map((l) => ({ article_id: l.a.id, qty: l.qty })), ...adjustBody(),
     payments: t.due > 0 ? paymentsEntered() : [], account_amount: t.due > 0 ? accountEntered() || undefined : undefined,
-    held_id: heldId || undefined, customer_id: saleCustomer?.id, leftover: t.left > 0 ? method : undefined,
+    held_id: heldId || undefined, customer_id: saleCustomer?.id, leftover: t.left > 0 ? method : undefined, created_at: backWhen.value(),
   });
   toast(r.kind === 'cambio' ? `Cambio registrado${t.due > 0 ? ` · cobrado ${money(t.due)}` : ''}` : 'Devolución registrada');
   resetSale(); await refreshCash(); await loadCash();
@@ -1185,6 +1198,7 @@ document.addEventListener('click', guard(async (e) => {
 }));
 
 // ---------- Cambios y devoluciones ----------
+const retWhen = whenField('#retWhen', '#retNow');
 const returnResolution = (r) => [
   r.exchange_amount ? `Cubre ${money(r.exchange_amount)} de la prenda nueva` : '',
   r.new_sale && r.new_sale.total - r.exchange_amount > 0 ? `Pagó ${money(r.new_sale.total - r.exchange_amount)} de diferencia` : '',
@@ -1206,7 +1220,7 @@ function openReturnDialog(sale) {
   ret = { sale, back: {}, fresh: [], customer: sale.customer_id ? { id: sale.customer_id, name: sale.customer_name } : null };
   $('#retTitle').textContent = `Cambio o devolución · venta ${compNumber(sale)}`;
   $('#retInfo').textContent = `${when(sale)}${sale.customer_name ? ` · Cliente: ${sale.customer_name}` : ''} · Total ${money(sale.total)}`;
-  $('#retScan').value = ''; $('#retResults').innerHTML = ''; $('#retNote').value = ''; $('#retError').textContent = ''; $('#retLeft').value = 'efectivo';
+  $('#retScan').value = ''; $('#retResults').innerHTML = ''; $('#retNote').value = ''; $('#retError').textContent = ''; $('#retLeft').value = 'efectivo'; retWhen.reset(); $('#retWhen').min = String(sale.created_at || '').slice(0, 16).replace(' ', 'T');
   $('#retCust').value = ''; $('#retCustResults').innerHTML = '';
   $$('#retPayBox [data-rp]').forEach((i) => (i.value = '')); $('#retAcc').value = '';
   $('#retAccWrap').hidden = !ret.customer;
@@ -1281,7 +1295,7 @@ $('#retForm').addEventListener('submit', async (e) => {
     if (t.due > 0 && !payments.length && !(Number($('#retAcc').value) > 0)) payments.push({ method: 'efectivo', amount: t.due }); // por defecto: efectivo exacto
     if (t.left > 0 && $('#retLeft').value === 'credit' && !ret.customer) throw new Error('Elegí el cliente al que se le deja el saldo a favor');
     const r = await api('POST', '/returns', {
-      sale_id: ret.sale.id, items, note: $('#retNote').value, leftover: t.left > 0 ? $('#retLeft').value : undefined, customer_id: ret.customer?.id,
+      sale_id: ret.sale.id, items, note: $('#retNote').value, created_at: retWhen.value(), leftover: t.left > 0 ? $('#retLeft').value : undefined, customer_id: ret.customer?.id,
       new_items: ret.fresh.map((l) => ({ article_id: l.a.id, qty: l.qty })), payments, account_amount: Number($('#retAcc').value) || undefined,
     });
     $('#retDialog').close(); toast(r.kind === 'cambio' ? 'Cambio registrado' : 'Devolución registrada');
