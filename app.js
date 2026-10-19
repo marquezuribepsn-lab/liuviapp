@@ -43,6 +43,17 @@ function tx(db, fn) {
   finally { txDepth--; }
 }
 
+// Fecha y hora elegidas a mano («2026-10-19T09:30» o «2026-10-19 09:30:00», hora local): devuelve «AAAA-MM-DD HH:MM:SS» o null si no se indicó.
+function parseWhen(v) {
+  if (v === undefined || v === null || v === '') return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?$/.exec(String(v).trim());
+  if (!m) throw bad('Fecha y hora inválidas');
+  const [, y, mo, d, h, mi, se = '00'] = m;
+  const dt = new Date(+y, +mo - 1, +d, +h, +mi, +se);
+  if (+y < 2000 || dt.getFullYear() !== +y || dt.getMonth() !== +mo - 1 || dt.getDate() !== +d || dt.getHours() !== +h || dt.getMinutes() !== +mi) throw bad('Fecha y hora inválidas');
+  if (dt.getTime() > Date.now() + 5 * 60_000) throw bad('La fecha y hora no pueden ser futuras');
+  return `${y}-${mo}-${d} ${h}:${mi}:${se}`;
+}
 function num(v, name, { min = 0, max = 1e12, int = false } = {}) {
   const n = Number(v);
   if (v === '' || v === null || v === undefined || !Number.isFinite(n)) throw bad(`${name} inválido`);
@@ -99,10 +110,10 @@ export function createApp(db, opts = {}) {
     };
   }
 
-  function moveStock(articleId, qty, reason, saleId = null, userId = null) {
+  function moveStock(articleId, qty, reason, saleId = null, userId = null, at = null) {
     db.prepare('UPDATE articles SET stock = stock + ? WHERE id = ?').run(qty, articleId);
-    db.prepare('INSERT INTO stock_movements (article_id, qty, reason, ref_sale_id, user_id) VALUES (?,?,?,?,?)')
-      .run(articleId, qty, reason, saleId, userId);
+    db.prepare("INSERT INTO stock_movements (article_id, qty, reason, ref_sale_id, user_id, created_at) VALUES (?,?,?,?,?,COALESCE(?, datetime('now','localtime')))")
+      .run(articleId, qty, reason, saleId, userId, at);
   }
 
   function sessionTotals(sessionId) {
@@ -801,8 +812,8 @@ export function createApp(db, opts = {}) {
       const customerName = customer ? customer.name : String(body.customer_name ?? '').trim().slice(0, 120);
       const customerDoc = customer ? customer.doc : String(body.customer_doc ?? '').trim().slice(0, 30);
       const { lastInsertRowid: saleId } = db.prepare(
-        'INSERT INTO sales (session_id,subtotal,discount,surcharge,total,user_id,customer_name,customer_doc,customer_id,account_amount,exchange_amount,prepaid_amount,promo_discount,promo_detail) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
-        .run(session.id, subtotal, discount, surcharge, total, user.id, customerName, customerDoc, customer?.id ?? null, round2(accountAmount + prepaidAcc), exchange, prepaidTotal, promo.total, promo.detail.length ? JSON.stringify(promo.detail) : null);
+        "INSERT INTO sales (session_id,subtotal,discount,surcharge,total,user_id,customer_name,customer_doc,customer_id,account_amount,exchange_amount,prepaid_amount,promo_discount,promo_detail,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,COALESCE(?, datetime('now','localtime')))")
+        .run(session.id, subtotal, discount, surcharge, total, user.id, customerName, customerDoc, customer?.id ?? null, round2(accountAmount + prepaidAcc), exchange, prepaidTotal, promo.total, promo.detail.length ? JSON.stringify(promo.detail) : null, extra.at ?? null);
       if (accountAmount > 0) {
         db.prepare('INSERT INTO account_movements (customer_id,amount,concept,sale_id,user_id) VALUES (?,?,?,?,?)')
           .run(customer.id, -accountAmount, `Venta #${saleId}`, saleId, user.id);
@@ -811,7 +822,7 @@ export function createApp(db, opts = {}) {
         const label = [a.brand, a.name, a.size, a.color].filter(Boolean).join(' · ');
         db.prepare('INSERT INTO sale_items (sale_id,article_id,name,qty,price,cost,brand) VALUES (?,?,?,?,?,?,?)')
           .run(saleId, a.id, label, qty, a.price, a.cost, a.brand);
-        moveStock(a.id, -qty, 'venta', saleId, user.id);
+        moveStock(a.id, -qty, 'venta', saleId, user.id, extra.at);
       }
       if (body.held_id) db.prepare('DELETE FROM held_sales WHERE id=?').run(body.held_id); // la venta en espera ya se cobró
       for (const p of prepaid) { // la plata ya entró a la caja el día de la seña: solo se registra con qué medio se pagó
@@ -882,11 +893,13 @@ export function createApp(db, opts = {}) {
   // ({article_id, qty, price}: «price» es lo que se acredita por unidad; por defecto el precio actual del artículo).
   route('POST', '/api/returns', 'ventas.devolver', ({ body, user, can }) => tx(db, () => {
     const session = requireSession();
+    const at = parseWhen(body.created_at); // fecha y hora del cambio (por defecto, ahora)
     const free = body.sale_id === undefined || body.sale_id === null || body.sale_id === '';
     const sale = free ? null : db.prepare('SELECT * FROM sales WHERE id=?').get(Number(body.sale_id) || 0);
     if (!free) {
       if (!sale) throw new HttpError(404, 'Venta no encontrada');
       if (sale.voided) throw new HttpError(409, 'La venta está anulada');
+      if (at && at < sale.created_at) throw bad('La devolución no puede tener una fecha anterior a la de la venta');
     }
     const asked = Array.isArray(body.items) ? body.items : [];
     if (!asked.length) throw bad('Elegí qué prendas se devuelven');
@@ -934,13 +947,13 @@ export function createApp(db, opts = {}) {
     if (customerId && !customer) throw new HttpError(404, 'Cliente no encontrado');
 
     // 1) la mercadería vuelve al stock
-    for (const l of lines) moveStock(l.article_id, l.qty, 'devolucion', sale?.id ?? null, user.id);
+    for (const l of lines) moveStock(l.article_id, l.qty, 'devolucion', sale?.id ?? null, user.id, at);
 
     // 2) cambio: la prenda nueva se carga como una venta cubierta, en parte o del todo, por lo devuelto
     const wanted = Array.isArray(body.new_items) ? body.new_items : [];
     let exchange = 0, newSale = null;
     if (wanted.length) {
-      newSale = createSale({ items: wanted, payments: body.payments, account_amount: body.account_amount, customer_id: customer?.id, held_id: body.held_id, ...cleanAdjust(body) }, user, can, 0, { credit: value }).data;
+      newSale = createSale({ items: wanted, payments: body.payments, account_amount: body.account_amount, customer_id: customer?.id, held_id: body.held_id, ...cleanAdjust(body) }, user, can, 0, { credit: value, at }).data;
       exchange = newSale.exchange_amount;
     }
     const saleRef = sale?.id ?? newSale?.id ?? null;
@@ -963,8 +976,8 @@ export function createApp(db, opts = {}) {
     }
 
     const { lastInsertRowid: id } = db.prepare(`INSERT INTO returns
-      (sale_id,session_id,customer_id,new_sale_id,value,exchange_amount,refund_cash,refund_method,credit_amount,note,user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
-      .run(sale?.id ?? null, session.id, customer?.id ?? null, newSale?.id ?? null, value, exchange, refundCash, refundMethod, credit, String(body.note ?? '').trim().slice(0, 200), user.id);
+      (sale_id,session_id,customer_id,new_sale_id,value,exchange_amount,refund_cash,refund_method,credit_amount,note,user_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,COALESCE(?, datetime('now','localtime')))`)
+      .run(sale?.id ?? null, session.id, customer?.id ?? null, newSale?.id ?? null, value, exchange, refundCash, refundMethod, credit, String(body.note ?? '').trim().slice(0, 200), user.id, at);
     for (const l of lines) {
       db.prepare('INSERT INTO return_items (return_id,sale_item_id,article_id,name,qty,price,list_price,cost,brand) VALUES (?,?,?,?,?,?,?,?,?)')
         .run(id, l.sale_item_id, l.article_id, l.name, l.qty, round2(l.unit), l.list, l.cost, l.brand);

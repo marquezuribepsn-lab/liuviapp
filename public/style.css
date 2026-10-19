@@ -285,3 +285,6 @@ body.locked>footer{display:none}
 .backBox input[data-bp]{width:100px}
 .backLeft{display:block;margin-top:6px}
 #dueLine.grand b{font-size:28px}
+
+.backWhen{display:flex;align-items:flex-end;gap:12px;margin:6px 0}
+.backWhen label{display:block;margin:0}
