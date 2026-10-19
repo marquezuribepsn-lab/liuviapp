@@ -44,6 +44,10 @@ test('invariantes: con cientos de operaciones al azar, stock, caja, cuentas y co
         const id = pick(sales);
         const sale = (await t.admin('GET', '/api/sales')).data.find((s) => s.id === id) || (await t.admin('GET', '/api/sales?date=' + new Date().toLocaleDateString('sv-SE'))).data.find((s) => s.id === id);
         if (sale && !sale.voided) await call('devolucion', 'POST', '/api/returns', { sale_id: id, items: [{ sale_item_id: sale.items[0].id, qty: 1 }], leftover: pick(['efectivo', 'tarjeta']) });
+      } else if (op < 0.53) { // cambio o devolución sin ticket: lo que entra suma stock, lo que se lleva descuenta, la diferencia va a caja o a la cuenta
+        const body = { items: [{ article_id: pick(A).id, qty: int(1, 2), price: int(1, 30) * 1000 }], leftover: pick(['efectivo', 'tarjeta', 'credit']), customer_id: pick(C).id };
+        if (rand() < 0.6) { body.new_items = [{ article_id: pick(A).id, qty: int(1, 2) }]; body.payments = [{ method: 'efectivo', amount: 1e7 }]; if (rand() < 0.3) body.discount_pct = pick([5, 10]); }
+        await call('cambio-sin-ticket', 'POST', '/api/returns', body);
       } else if (op < 0.56 && sales.length) await call('anulacion', 'POST', `/api/sales/${pick(sales)}/void`, {});
       else if (op < 0.68) {
         const r = await call('compra', 'POST', '/api/purchases', { supplier_id: pick(S).id, update_cost: rand() < 0.5, items: [{ article_id: pick(A).id, qty: int(1, 6), cost: int(1, 5) * 1000 }, { article_id: pick(A).id, qty: int(1, 3), cost: int(1, 5) * 1000 }], paid_amount: rand() < 0.5 ? int(0, 3) * 1000 : 0, from_cash: rand() < 0.5 });
