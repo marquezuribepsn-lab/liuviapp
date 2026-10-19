@@ -919,6 +919,7 @@ async function loadCash() {
   $('#cajaClosed').hidden = !!cash; $('#cajaOpen').hidden = !cash;
   $('#posBox').hidden = !(cash && can('ventas.cobrar')); // sin caja abierta no se vende
   $('#cajaKpis').hidden = !(cash && (ver || operar));
+  $('#cajaEye').hidden = !(ver || operar);
   $('#openForm').hidden = !operar;
   $('#cajaClosed').querySelector('.muted')?.remove();
   if (!cash && !operar) $('#cajaClosed').insertAdjacentHTML('beforeend', '<p class="muted">La caja está cerrada. Pedile a quien tenga permiso que la abra.</p>');
@@ -927,11 +928,11 @@ async function loadCash() {
     $('#cajaKpis').hidden = !(ver || operar);
     if (ver || operar) {
       $('#cajaKpis').innerHTML = [
-        ['Efectivo esperado en caja', money(cash.expected_cash_now)], ['Fondo inicial', money(cash.opening_amount)],
-        ['Efectivo neto', money(m.efectivo.neto)], ['Tarjeta', money(m.tarjeta.neto)], ['Transferencia', money(m.transferencia.neto)],
-        ['Ventas', `${cash.sales_count} · ${money(cash.sales_total)}`],
+        ['Efectivo esperado en caja', moneyH(cash.expected_cash_now)], ['Fondo inicial', moneyH(cash.opening_amount)],
+        ['Efectivo neto', moneyH(m.efectivo.neto)], ['Tarjeta', moneyH(m.tarjeta.neto)], ['Transferencia', moneyH(m.transferencia.neto)],
+        ['Ventas', hv(`${cash.sales_count} · ${money(cash.sales_total)}`)],
       ].map(([k, v]) => `<div class="kpi"><span>${k}</span><b>${v}</b></div>`).join('');
-      $('#expected').textContent = `Efectivo esperado: ${money(cash.expected_cash_now)}`;
+      $('#expected').textContent = `Efectivo esperado: ${moneyH(cash.expected_cash_now)}`;
     }
     $('#dockMov').hidden = !operar; $('#dockClose').hidden = !operar; $('#dockList').hidden = !ver;
   }
@@ -959,8 +960,8 @@ async function loadCash() {
     const sessions = await api('GET', '/cash/sessions');
     $('#sessionsTable tbody').innerHTML = sessions.map((s) => {
       const d = s.counted_cash == null ? null : s.counted_cash - s.expected_cash;
-      return `<tr><td>${s.id}</td><td>${s.opened_at.slice(0, 16)}</td><td>${s.closed_at ? s.closed_at.slice(0, 16) : 'Abierta'}</td><td>${esc([s.opened_by_name, s.closed_by_name].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(' / '))}</td><td class="num">${money(s.opening_amount)}</td><td class="num">${s.sales_count} · ${money(s.sales_total)}</td>
-        <td class="num">${s.closed_at ? money(s.expected_cash) : '—'}</td><td class="num">${s.closed_at ? money(s.counted_cash) : '—'}</td><td class="num ${d < 0 ? 'neg' : d > 0 ? 'pos' : ''}">${d == null ? '—' : money(d)}</td></tr>`;
+      return `<tr><td>${s.id}</td><td>${s.opened_at.slice(0, 16)}</td><td>${s.closed_at ? s.closed_at.slice(0, 16) : 'Abierta'}</td><td>${esc([s.opened_by_name, s.closed_by_name].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(' / '))}</td><td class="num">${moneyH(s.opening_amount)}</td><td class="num">${hv(`${s.sales_count} · ${money(s.sales_total)}`)}</td>
+        <td class="num">${s.closed_at ? moneyH(s.expected_cash) : '—'}</td><td class="num">${s.closed_at ? moneyH(s.counted_cash) : '—'}</td><td class="num ${hideNums ? '' : d < 0 ? 'neg' : d > 0 ? 'pos' : ''}">${d == null ? '—' : moneyH(d)}</td></tr>`;
     }).join('');
   }
   // Con la venta a la vista, el escáner queda listo (salvo que se esté escribiendo en otro campo).
@@ -983,18 +984,19 @@ $('#movForm').addEventListener('submit', async (e) => {
 });
 $('#dockList').addEventListener('click', guard(async () => {
   const movs = await api('GET', '/cash/movements');
-  $('#cashMovTable tbody').innerHTML = movs.map((x) => `<tr><td>${time(x.created_at)}</td><td class="${x.type === 'ingreso' ? 'pos' : 'neg'}">${x.type}</td><td>${x.method}</td><td class="num">${money(x.amount)}</td><td>${esc(x.concept)}</td><td>${esc(x.user_name || '')}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Sin movimientos</td></tr>';
+  $('#cashMovTable tbody').innerHTML = movs.map((x) => `<tr><td>${time(x.created_at)}</td><td class="${x.type === 'ingreso' ? 'pos' : 'neg'}">${x.type}</td><td>${x.method}</td><td class="num">${moneyH(x.amount)}</td><td>${esc(x.concept)}</td><td>${esc(x.user_name || '')}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Sin movimientos</td></tr>';
   $('#movListDialog').showModal();
 }));
 $('#movListClose').addEventListener('click', () => $('#movListDialog').close());
-$('#dockClose').addEventListener('click', () => { $('#closeForm').reset(); $('#expected').textContent = cash ? `Efectivo esperado: ${money(cash.expected_cash_now)}` : ''; $('#closeDialog').showModal(); $('#closeCounted').focus(); });
+$('#dockClose').addEventListener('click', () => { $('#closeForm').reset(); $('#expected').textContent = cash ? `Efectivo esperado: ${moneyH(cash.expected_cash_now)}` : ''; $('#closeDialog').showModal(); $('#closeCounted').focus(); });
 $('#closeCancel').addEventListener('click', () => $('#closeDialog').close());
 $('#closeForm').addEventListener('submit', guard(async (e) => {
   e.preventDefault();
   if (!await uiConfirm('No se podrán registrar ventas hasta abrir una nueva.', { title: '¿Cerrar la caja?', ok: 'Cerrar caja', danger: true })) return;
   const r = await api('POST', '/cash/close', { counted: Number($('#closeCounted').value), note: $('#closeNote').value });
   e.target.reset(); $('#closeDialog').close();
-  await uiAlert(`Esperado: ${money(r.expected_cash)}\nContado: ${money(r.counted_cash)}\nDiferencia: ${money(r.difference)}`, 'Caja cerrada');
+  const dif = r.difference === 0 ? 'sin diferencia' : r.difference > 0 ? 'sobra plata' : 'falta plata'; // con los números ocultos se avisa igual si hay diferencia
+  await uiAlert(hideNums ? `Esperado: ${HID}\nContado: ${HID}\nDiferencia: ${dif}` : `Esperado: ${money(r.expected_cash)}\nContado: ${money(r.counted_cash)}\nDiferencia: ${money(r.difference)}`, 'Caja cerrada');
   await loadCash();
 }));
 $('#retTable').addEventListener('click', (e) => { const r = window._rets.find((x) => x.id == e.target.dataset.rprint); if (r) printReturn(r); });
@@ -1270,7 +1272,7 @@ $$('.eyeBtn').forEach((b) => b.addEventListener('click', guard(async () => {
   hideNums = !hideNums;
   try { localStorage.setItem('liuvi_hide_nums', hideNums ? '1' : '0'); } catch { /* sin almacenamiento */ }
   syncEyes();
-  if (!$('#inicio').hidden) renderDashboard(); else if (!$('#stats').hidden) await loadStats();
+  if (!$('#inicio').hidden) renderDashboard(); else if (!$('#stats').hidden) await loadStats(); else if (!$('#venta').hidden) await loadCash();
 })));
 syncEyes();
 

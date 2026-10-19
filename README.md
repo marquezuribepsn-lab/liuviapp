@@ -33,7 +33,7 @@ En **Copias → Actualizaciones del programa** (solo administradores, en el prog
 
 ## Funciones
 
-- **Inicio**: resumen del día (con el ojo 👁 de arriba a la derecha se ocultan los números, como en Mercado Pago; también en Estadísticas) —vendido hoy contra ayer, ventas, ganancia, efectivo en caja, stock bajo, lo que te deben los clientes y lo que debés a proveedores, señas abiertas—, gráfico de 7 días, más vendidos y avisos (caja cerrada, copias sin configurar o atrasadas, versión nueva).
+- **Inicio**: resumen del día (con el ojo 👁 de arriba a la derecha se ocultan los números, como en Mercado Pago; también en Estadísticas y en la caja de Ventas y caja) —vendido hoy contra ayer, ventas, ganancia, efectivo en caja, stock bajo, lo que te deben los clientes y lo que debés a proveedores, señas abiertas—, gráfico de 7 días, más vendidos y avisos (caja cerrada, copias sin configurar o atrasadas, versión nueva).
 - **Ventas y caja**: pantalla de cobro con lector de código de barras, varios medios de pago por venta (efectivo, tarjeta, transferencia, cuenta del cliente), descuento y recargo (% o $), vuelto, ofertas automáticas, ventas en espera, cambios y devoluciones, anulaciones, ingresos y egresos manuales, cierre de caja con efectivo contado y diferencia, historial de cajas y comprobantes imprimibles. No se vende con la caja cerrada.
 - **Clientes**: ficha, historial de compras y **cuenta corriente** (saldo a favor o deuda), cobro de deudas, **señas con mercadería apartada** y devolución de saldo. Vender a cuenta requiere un permiso aparte.
 - **Inventario** (agrupa tres secciones):
